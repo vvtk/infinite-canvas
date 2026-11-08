@@ -69,7 +69,7 @@ export default function IndexPage() {
                             {t("home.viewPrompts")}
                         </Button>
                     </div>
-                    <div className="grid auto-rows-[210px] gap-4 md:grid-cols-4">
+                    <div className="mx-auto grid w-full max-w-6xl auto-rows-[210px] justify-center gap-4 md:grid-cols-4">
                         {promptShowcase.map((item, index) => (
                             <button
                                 key={item.id}
