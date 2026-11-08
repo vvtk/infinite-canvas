@@ -3,6 +3,8 @@ import { Button, InputNumber, Modal, Tooltip } from "antd";
 import { Grid2x2, ListRestart, PanelTop, Redo2, Rows3, Trash2, Undo2, ZoomIn, ZoomOut } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
+import { matchesCanvasShortcut } from "@/lib/canvas/keyboard-shortcuts";
+import { useCanvasShortcutStore } from "@/stores/canvas/use-canvas-shortcut-store";
 import { readImageMeta } from "@/lib/image-utils";
 import type { ImageSplitParams } from "@/lib/canvas/canvas-image-data";
 import { useImageEditorViewport } from "@/components/canvas/use-image-editor-viewport";
@@ -14,6 +16,7 @@ const maxGridSize = 12;
 type ActiveLine = { axis: "horizontal" | "vertical"; index: number } | null;
 
 export function CanvasNodeSplitDialog({ dataUrl, open, onClose, onConfirm }: { dataUrl: string; open: boolean; onClose: () => void; onConfirm: (params: CanvasImageSplitParams) => void }) {
+    const shortcutBindings = useCanvasShortcutStore((state) => state.bindings);
     const { t } = useTranslation();
     const [params, setParams] = useState(defaultParams);
     const [image, setImage] = useState<{ width: number; height: number } | null>(null);
@@ -130,10 +133,9 @@ export function CanvasNodeSplitDialog({ dataUrl, open, onClose, onConfirm }: { d
         const handleKeyDown = (event: KeyboardEvent) => {
             const target = event.target instanceof Element ? event.target : null;
             if (target?.closest("input,textarea,[contenteditable='true']")) return;
-            const key = event.key.toLowerCase();
-            const isUndo = (event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey && key === "z";
-            const isRedo = (event.metaKey || event.ctrlKey) && !event.altKey && ((event.shiftKey && key === "z") || (!event.shiftKey && key === "y"));
-            const isDelete = event.key === "Delete" || event.key === "Backspace";
+            const isUndo = shortcutBindings.undo.some((shortcut) => matchesCanvasShortcut(event, shortcut));
+            const isRedo = shortcutBindings.redo.some((shortcut) => matchesCanvasShortcut(event, shortcut));
+            const isDelete = shortcutBindings.delete.some((shortcut) => matchesCanvasShortcut(event, shortcut));
             if (!isUndo && !isRedo && !isDelete) return;
             event.preventDefault();
             event.stopPropagation();
@@ -144,7 +146,7 @@ export function CanvasNodeSplitDialog({ dataUrl, open, onClose, onConfirm }: { d
         };
         window.addEventListener("keydown", handleKeyDown, true);
         return () => window.removeEventListener("keydown", handleKeyDown, true);
-    }, [active, open, params, redoSplit, undoSplit]);
+    }, [active, open, params, redoSplit, shortcutBindings, undoSplit]);
     const confirmParams = { ...params, horizontalLines, verticalLines, rows, columns };
 
     return (

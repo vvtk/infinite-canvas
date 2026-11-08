@@ -23,7 +23,7 @@
 
 - 前端使用 Vite、React、React Router、TypeScript、Ant Design、Tailwind、Zustand。
 - 编写 Ant Design 相关代码时，参考 https://ant.design/llms-full.txt 理解组件 API、示例和设计规范，并优先结合项目当前 antd 版本与既有写法。
-- 外部服务请求统一放在 `web/src/services/api/`，由浏览器前端直连，不假设存在项目后端。
+- 外部服务请求统一放在 `web/src/services/api/`；模型 API 由浏览器直连。授权会话、云同步及媒体签名使用独立 `server/` 后端，不得将 OAuth 客户端密钥打包到前端。
 - 全局或跨页面状态优先放在 `web/src/stores/`。
 - 已经放在全局 store 或全局 hook 中的状态/动作，组件需要时直接使用对应 store/hook，不要为了“纯组件”层层透传 props；避免一个组件传递过多参数。
 - 全局组件、全局常量、全局配置等全局性质的内容不要作为 props 或参数层层传递；哪里需要就在哪里直接从对应全局入口获取。
@@ -70,6 +70,12 @@
 - 每次任务完成前，都要根据实际变更检查并更新 `docs/content/docs/progress/todo.mdx` 和 `docs/content/docs/progress/pending-test.mdx`；如果功能或待办没有变化，也要确认无需修改。
 - 文档不要写过期日期；除非用户明确要求记录具体时间。
 
+## Git 提交与推送
+
+- 每次提交后的代码统一推送到 `https://github.com/vvtk/infinite-canvas`，默认使用 `origin` 远程。
+- `origin` 应指向 `https://github.com/vvtk/infinite-canvas.git`；原项目 `https://github.com/basketikun/infinite-canvas.git` 作为 `upstream`，用于拉取上游更新。
+- 推送前核对目标远程地址，不得将本项目改动推送到原作者仓库。
+
 ## 发版本流程
 
 - 发版本时，先把 `CHANGELOG.md` 的 `Unreleased` 变更整理成新的版本记录，并保留空的 `Unreleased` 标题。
@@ -90,7 +96,7 @@
 ## 项目注意事项
 
 - 新增或调整超时、重试次数、大小限制、并发上限等会改变实际行为的边界值前，必须先向用户说明适用环节、默认值和失败后的处理方式，并取得确认；不要把经验值当成纯内部实现静默加入。
-- 当前画布项目和“我的素材”主要保存在浏览器本地，不要在文档中误写成已支持云同步。
+- 画布和素材始终先保存到浏览器；云同步仅在登录且后端配置完成时使用。当前授权/同步功能仍待真实账号与双浏览器验收，不得写为正式验证完成。
 - 当前 AI API Key 存在浏览器本地，并由前端直接请求 OpenAI 兼容接口；涉及安全说明时要写清楚。
 - Docker 静态资源路径目前仍是待办项，文档中不要过度承诺生产部署已经完全验证。
 - Agent 对话消息必须同时按 `threadId`、`turnId` 和 `itemId` 归属；实时事件只用于补充未物化的 turn，历史快照成为权威后不得重复合并同一条消息。

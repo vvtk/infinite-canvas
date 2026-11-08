@@ -1,23 +1,18 @@
-import React from "react";
-import { createRoot } from "react-dom/client";
-import "antd/dist/reset.css";
-import "streamdown/styles.css";
-import "./styles/globals.css";
-import { RouterProvider } from "react-router-dom";
+import { initializeAccount, type AccountSession } from "@/lib/account-storage";
 
-import { AppProviders } from "@/components/layout/app-providers";
-import "@/i18n";
-import { initAnalytics } from "@/lib/analytics";
-import { router } from "@/router";
-
-initAnalytics();
-
-document.body.style.fontFamily = '"SF Pro Display","SF Pro Text","PingFang SC","Microsoft YaHei","Helvetica Neue",sans-serif';
-
-createRoot(document.getElementById("root")!).render(
-    <React.StrictMode>
-        <AppProviders>
-            <RouterProvider router={router} />
-        </AppProviders>
-    </React.StrictMode>,
-);
+async function bootstrap() {
+    let session: AccountSession = { user: null };
+    let offlineAccount = localStorage.getItem("canvas:last-account") || "guest";
+    try {
+        const response = await fetch("/api/auth/session", { credentials: "same-origin", cache: "no-store" });
+        if (response.ok && response.headers.get("content-type")?.includes("application/json")) {
+            session = await response.json();
+        }
+    } catch {
+        offlineAccount = localStorage.getItem("canvas:last-account") || "guest";
+    }
+    if (session.user) localStorage.setItem("canvas:last-account", session.user.id);
+    initializeAccount(session, offlineAccount);
+    await import("./app");
+}
+void bootstrap();

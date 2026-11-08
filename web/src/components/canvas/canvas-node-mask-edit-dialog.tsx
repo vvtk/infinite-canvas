@@ -4,6 +4,8 @@ import { Button, Input, Modal, Slider, Tooltip } from "antd";
 import { Brush, Eraser, ImagePlus, Redo2, RotateCcw, Undo2, WandSparkles, ZoomIn, ZoomOut } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
+import { matchesCanvasShortcut } from "@/lib/canvas/keyboard-shortcuts";
+import { useCanvasShortcutStore } from "@/stores/canvas/use-canvas-shortcut-store";
 import { readImageMeta } from "@/lib/image-utils";
 import { useImageEditorViewport } from "@/components/canvas/use-image-editor-viewport";
 
@@ -23,6 +25,7 @@ const maskOverlayColor = "#2563eb";
 const maskOverlayAlpha = 0.4;
 
 export function CanvasNodeMaskEditDialog({ dataUrl, open, onClose, onConfirm }: { dataUrl: string; open: boolean; onClose: () => void; onConfirm: (payload: CanvasImageMaskEditPayload) => void }) {
+    const shortcutBindings = useCanvasShortcutStore((state) => state.bindings);
     const { t } = useTranslation();
     const maskCanvasRef = useRef<HTMLCanvasElement>(null);
     const previewCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -188,10 +191,8 @@ export function CanvasNodeMaskEditDialog({ dataUrl, open, onClose, onConfirm }: 
         const handleKeyDown = (event: KeyboardEvent) => {
             const target = event.target instanceof Element ? event.target : null;
             if (target?.closest("input,textarea,[contenteditable='true']")) return;
-            const key = event.key.toLowerCase();
-            const modifier = (event.metaKey || event.ctrlKey) && !event.altKey;
-            const isUndo = modifier && !event.shiftKey && key === "z";
-            const isRedo = modifier && ((event.shiftKey && key === "z") || (!event.shiftKey && key === "y"));
+            const isUndo = shortcutBindings.undo.some((shortcut) => matchesCanvasShortcut(event, shortcut));
+            const isRedo = shortcutBindings.redo.some((shortcut) => matchesCanvasShortcut(event, shortcut));
             if (!isUndo && !isRedo) return;
             event.preventDefault();
             event.stopPropagation();
@@ -201,7 +202,7 @@ export function CanvasNodeMaskEditDialog({ dataUrl, open, onClose, onConfirm }: 
         };
         window.addEventListener("keydown", handleKeyDown, true);
         return () => window.removeEventListener("keydown", handleKeyDown, true);
-    }, [open, redoMask, undoMask]);
+    }, [open, redoMask, shortcutBindings, undoMask]);
 
     const submit = (generate: boolean) => {
         const nextPrompt = prompt.trim();

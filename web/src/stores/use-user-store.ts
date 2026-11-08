@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { getInitialSession } from "@/lib/account-storage";
 
 export type LocalUser = {
     id: string;
@@ -13,6 +14,6 @@ type UserStore = {
 };
 
 export const useUserStore = create<UserStore>()((set) => ({
-    user: null,
+    user: getInitialSession().user,
     clearSession: () => set({ user: null }),
 }));

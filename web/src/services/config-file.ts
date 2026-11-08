@@ -18,7 +18,9 @@ type AppConfigFile = {
 };
 
 export function exportAppConfig() {
-    const { config, webdav } = useConfigStore.getState();
+    const { config: storedConfig, webdav } = useConfigStore.getState();
+    const managedKeys = new Set(storedConfig.channels.filter((item) => item.managedAccount).map((item) => item.apiKey));
+    const config = { ...storedConfig, apiKey: managedKeys.has(storedConfig.apiKey) ? "" : storedConfig.apiKey, channels: storedConfig.channels.filter((item) => !item.managedAccount) };
     const { sources, schedule } = usePromptSourceStore.getState();
     const data: AppConfigFile = { app: "infinite-canvas", version: 1, exportedAt: new Date().toISOString(), config, webdav, promptSources: { sources, schedule } };
     saveAs(new Blob([JSON.stringify(data, null, 2)], { type: "application/json;charset=utf-8" }), "infinite-canvas-config.json");

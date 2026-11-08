@@ -1,0 +1,67 @@
+---
+title: LLMRoam 登录与云同步（待验收）
+description: OAuth 应用注册、独立 API、PostgreSQL 和 S3 配置
+---
+
+# LLMRoam 登录与云同步（待验收）
+
+本功能位于功能分支，尚需真实账号和双浏览器验收。访客继续使用浏览器本地数据。登录后按账号隔离 IndexedDB；首次登录只有选择“导入并同步”才上传访客数据。退出先停止同步和运行请求，再清除本机专用 API Key 并返回访客空间。网络不可用时保留上次账号本地空间；登录另一账号后使用其独立空间。
+
+## 默认边界与失败处理
+
+用户已确认：单媒体 512 MiB，每账号 2 GiB（记录 JSON、已完成媒体及未过期上传预留）；授权码及登录流程 5 分钟、单次使用；访问令牌 1 小时；刷新授权和画布会话最长 30 天；媒体签名地址 10 分钟。全部可通过环境变量调整。超限保留本地并显示失败，令牌过期重新登录，上传或下载地址过期后点击立即同步重新申请。JSON 请求受 Fastify 默认 bodyLimit 约束（1 MiB），大型画布超过此值会保留本地并显示失败。
+
+本地保存后 2 秒合并同步；获得焦点或恢复联网时重试，失败不会无限重试。并发修改按基础修订号检测，保留冲突副本；删除保留墓碑，旧设备不能无条件恢复旧记录。云端暂不自动回收未引用的原始媒体，删除记录不会立即释放已上传媒体容量；运维清理前需核对所有账号引用和备份。
+
+## 本地开发
+
+1. 在 LLMRoam 配置下方 OAuth 应用，启动其服务。画布本地回调固定为 `http://localhost:3000/api/auth/callback`。
+2. 复制 `server/.env.example` 到 `server/.env`，填写真实配置；用密码管理器或 `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` 生成独立加密密钥和客户端密钥，不提交 `.env`。两端客户端 ID/Secret 必须相同，两端加密密钥可不同且重启后必须稳定。
+3. 启动 PostgreSQL 和私有 S3 兼容服务。`S3_ENDPOINT` 供 API 访问，`S3_PUBLIC_ENDPOINT` 必须可被浏览器访问，不能填写 Docker 内部主机名。
+4. 在 `server` 执行 `npm ci`、`node --env-file=.env --import tsx src/migrate.ts`、`node --env-file=.env --import tsx src/init-storage.ts`、`node --env-file=.env --import tsx src/index.ts`。
+5. 在 `web` 执行 `bun install`、`bun run dev`，访问 `http://localhost:3000`。Vite 将 `/api` 转发到 `127.0.0.1:3001`；若只启动静态前端，登录不可用，本地功能仍可使用。
+
+## LLMRoam OAuth 应用注册
+
+当前按环境变量注册一个机密客户端（不是第三方登录提供商配置页面）：
+
+```dotenv
+CANVAS_OAUTH_CLIENT_ID=infinite-canvas
+CANVAS_OAUTH_CLIENT_SECRET=与画布后端相同的随机密钥
+CANVAS_OAUTH_REDIRECT_URI=http://localhost:3000/api/auth/callback
+CANVAS_OAUTH_ISSUER=http://localhost:33002
+CANVAS_OAUTH_ENCRYPTION_KEY=独立的64位十六进制密钥
+CANVAS_ALLOWED_ORIGINS=http://localhost:3000
+CANVAS_OAUTH_CODE_SECONDS=300
+CANVAS_OAUTH_ACCESS_SECONDS=3600
+CANVAS_OAUTH_REFRESH_SECONDS=2592000
+```
+
+回调地址完全匹配，不支持通配符。生产环境发行者和画布地址使用 HTTPS。授权端点为 `/api/canvas-oauth/authorize`、`/token`、`/userinfo`、`/credentials`，权限是 `profile models`。授权页复用 LLMRoam 登录会话，拒绝个人访问令牌代替用户确认；PKCE 必须使用 S256。登录、MFA 和现有安全验证仍在 LLMRoam 完成。
+
+模型请求由浏览器携带专用 API Key 直连 LLMRoam，消耗用户额度。`CANVAS_ALLOWED_ORIGINS` 是逗号分隔的精确来源列表；模型接口需允许 Authorization、Content-Type 及对应 GET/POST/OPTIONS 预检。已有网关/反代不得另行添加宽泛的 CORS 头。原始媒体所在 S3 桶保持私有，运行 `init-storage.ts` 只为画布来源配置 GET/POST/HEAD CORS。
+
+专用 Key 仅存在当前账号的浏览器本地配置；自动添加 LLMRoam 服务商并读取模型，不更改已有模型选择。默认配置导出排除托管服务商，云同步递归去除密钥、密码和缩略图。账户菜单可撤销专用 Key；撤销后需重新授权才能创建新 Key。
+
+## Docker Compose
+
+在仓库根 `.env` 设置 `POSTGRES_PASSWORD`、`S3_ACCESS_KEY`、`S3_SECRET_KEY`（S3 值与 `server/.env` 一致），先填写 `server/.env`。运行：
+
+```sh
+docker compose -f docker-compose.cloud.yml up -d postgres s3
+docker compose -f docker-compose.cloud.yml run --rm api npm run migrate
+docker compose -f docker-compose.cloud.yml run --rm api node --import tsx src/init-storage.ts
+docker compose -f docker-compose.cloud.yml up -d --build api web
+```
+
+MinIO 镜像从固定版本官方源码校验 SHA256 后构建，保留 AGPL 许可证；初次编译需要网络和 Go 构建缓存。生产可以将 PostgreSQL/S3 配置替换为外部托管服务，并移除对应本地服务与 `depends_on`。API 和数据库不对公网暴露，前端反代 `/api`。对外 TLS 由部署环境提供；先配置好 HTTPS 公开地址再启用安全 Cookie。
+
+备份 PostgreSQL 与 S3 原始对象，同时保管加密密钥。不能仅备份数据库。密钥丢失会导致已有 OAuth 凭据不可解密，应清除会话后重新授权。生产 Compose 全栈部署及真实账号联调仍待验收。
+
+## 验收
+
+- 普通页/画布页、手机宽度、深浅主题：指定入口消失，最右侧始终能登录。
+- 成功、拒绝、错误 state、过期、重放、恢复会话、退出；模型列表与实际直连调用；手工服务商和模型选择保留。
+- 两个浏览器同步画布、素材、生成历史及原始媒体；并发编辑保留副本、删除、断网恢复、上传失败和超额。
+- 两个账号互访记录及媒体应被拒绝；访客导入拒绝前不上传，退出及再次授权不残留专用 Key。
+- 已执行的自动化检查和仍待真实环境验证的项目见 Pending Tests；不将此分支作为生产完成声明。

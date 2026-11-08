@@ -7,6 +7,12 @@ description: Implemented changes that still need manual verification
 
 The current release needs manual verification in these areas:
 
+- LLMRoam 登录与云同步：按 [部署与验收说明](/docs/development/cloud-sync) 验证真实 OAuth 授权、浏览器直连模型、双浏览器同步及跨账号隔离。默认单媒体 512 MiB、每账号 2 GiB；超限保留本地。已通过 PostgreSQL 后端回归与真实 S3 签名上传/校验/下载、LLMRoam 三数据库 OAuth 回归和凭据缓存完整性测试；真实账号端到端、两浏览器编辑与生产 Compose 尚待确认。
+
+- Canvas keyboard shortcuts: open the keyboard shortcut dialog from the top bar and bottom controls, record custom bindings for select all, copy/paste, group/ungroup, undo/redo, delete, and Escape, then refresh and confirm they persist and work. Assigning a binding already used by another action should be rejected without changing either action; restoring defaults should restore the original platform-aware bindings. Fixed mouse gestures should remain unchanged, and typing in inputs or editable text should not trigger canvas commands.
+
+- Canvas node creation menu: right-clicking empty canvas should open the Select Node menu at the pointer and suppress the browser context menu; double-clicking empty canvas should no longer open it. Right-clicking nodes or connections should keep their existing context menus, and right-clicking empty canvas in reference-selection mode should not create a node. In the shortcut dialog, the fixed mouse-operation row should use the same right-side button styling as editable bindings while remaining disabled.
+
 - Saved model selection: save a canvas node with a model, then remove its provider or remove that model while another video model remains the default. Generation, retry and pending-video recovery should keep the unavailable model selected and open configuration instead of sending a request to the default or first provider. Re-selecting a valid model should allow generation. Changing only the API key on the same provider should preserve the model; switching a config node from a valid image model to video should still use the video default.
 
 - Local storage usage on HTTP deployments: opening the Local storage settings tab at an HTTP origin without `navigator.storage.estimate` should still show IndexedDB content statistics, display an unavailable quota instead of an error, and keep the canvas data unchanged.

@@ -15,6 +15,7 @@ import { nanoid } from "nanoid";
 import { getDataUrlByteSize, readImageMeta } from "@/lib/image-utils";
 import { imageReferenceLabel } from "@/lib/image-reference-prompt";
 import { canvasThemes, type CanvasBackgroundMode } from "@/lib/canvas-theme";
+import { matchesCanvasShortcut } from "@/lib/canvas/keyboard-shortcuts";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { cropDataUrl, splitDataUrl, upscaleDataUrl } from "@/lib/canvas/canvas-image-data";
@@ -44,6 +45,7 @@ import { CanvasSidePanel } from "@/components/canvas/canvas-side-panel";
 import { CanvasZoomControls } from "@/components/canvas/canvas-zoom-controls";
 import { useAgentStore } from "@/stores/use-agent-store";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
+import { useCanvasShortcutStore } from "@/stores/canvas/use-canvas-shortcut-store";
 import { useAgentBridge } from "@/pages/canvas/hooks/use-agent-bridge";
 import { usePluginHost } from "@/pages/canvas/hooks/use-plugin-host";
 import { buildNodeMentionReferences, getGroupResourceNodes, isCanvasReferenceNode, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
@@ -212,6 +214,7 @@ function InfiniteCanvasPage() {
     });
 
     const config = useConfigStore((state) => state.config);
+    const shortcutBindings = useCanvasShortcutStore((state) => state.bindings);
     const effectiveConfig = useEffectiveConfig();
     const isAiConfigReady = useConfigStore((state) => state.isAiConfigReady);
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
@@ -437,6 +440,21 @@ function InfiniteCanvasPage() {
         [modal, stopGenerationByRunningId, t],
     );
 
+    const cloudApplyingRef = useRef(false);
+    const [cloudRevision, setCloudRevision] = useState(0);
+    useEffect(() => {
+        const applied = (event: Event) => {
+            const record = (event as CustomEvent).detail;
+            if (record.domain === "canvas" && record.id === projectId) {
+                cloudApplyingRef.current = true;
+                if (viewportSaveTimerRef.current) clearTimeout(viewportSaveTimerRef.current);
+                setCloudRevision((value) => value + 1);
+            }
+        };
+        window.addEventListener("canvas-cloud-applied", applied);
+        return () => window.removeEventListener("canvas-cloud-applied", applied);
+    }, [projectId]);
+
     useEffect(() => {
         if (!hydrated) return;
         setProjectLoaded(false);
@@ -446,9 +464,11 @@ function InfiniteCanvasPage() {
             return;
         }
 
+        let cancelled = false;
         const restore = async () => {
             const restoredNodes = await hydrateCanvasImages(resetInterruptedGeneration(project.nodes));
             const restoredSessions = await hydrateAssistantImages(project.chatSessions || []);
+            if (cancelled) return;
             setNodes(restoredNodes);
             setConnections(project.connections);
             setChatSessions(restoredSessions);
@@ -470,10 +490,12 @@ function InfiniteCanvasPage() {
                 showImageInfo: project.showImageInfo || false,
             };
             setHistoryState({ canUndo: false, canRedo: false });
+            cloudApplyingRef.current = false;
             setProjectLoaded(true);
         };
         void restore();
-    }, [hydrated, navigate, openProject, projectId]);
+        return () => { cancelled = true; };
+    }, [hydrated, navigate, openProject, projectId, cloudRevision]);
 
     useEffect(() => {
         if (!projectLoaded) return;
@@ -522,7 +544,7 @@ function InfiniteCanvasPage() {
     }, [activeChatId, backgroundMode, chatSessions, connections, createHistoryEntry, nodes, projectLoaded, showImageInfo]);
 
     useEffect(() => {
-        if (!projectLoaded || historyPausedRef.current) return;
+        if (!projectLoaded || historyPausedRef.current || cloudApplyingRef.current) return;
         updateProject(projectId, { nodes, connections, chatSessions, activeChatId, backgroundMode, showImageInfo });
     }, [activeChatId, backgroundMode, chatSessions, connections, nodes, projectId, projectLoaded, showImageInfo, updateProject]);
 
@@ -1584,25 +1606,23 @@ function InfiniteCanvasPage() {
             const target = event.target instanceof Element ? event.target : null;
             if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement || target?.closest("[contenteditable='true'],[data-canvas-no-zoom],[data-canvas-shortcuts-ignore]")) return;
 
-            const key = event.key.toLowerCase();
-            const isModifierShortcut = event.metaKey || event.ctrlKey;
+            const isShortcut = (action: keyof typeof shortcutBindings) => shortcutBindings[action].some((shortcut) => matchesCanvasShortcut(event, shortcut));
 
-            if (isModifierShortcut && key === "c" && window.getSelection()?.toString()) return;
+            if (isShortcut("copy") && window.getSelection()?.toString()) return;
 
-            if (isModifierShortcut && !event.altKey && key === "z") {
+            if (isShortcut("undo")) {
                 event.preventDefault();
-                if (event.shiftKey) redoCanvas();
-                else undoCanvas();
+                undoCanvas();
                 return;
             }
 
-            if (isModifierShortcut && !event.altKey && key === "y") {
+            if (isShortcut("redo")) {
                 event.preventDefault();
                 redoCanvas();
                 return;
             }
 
-            if (isModifierShortcut && !event.altKey && key === "a") {
+            if (isShortcut("selectAll")) {
                 event.preventDefault();
                 setSelectedNodeIds(new Set(nodesRef.current.map((node) => node.id)));
                 setSelectedConnectionId(null);
@@ -1611,14 +1631,15 @@ function InfiniteCanvasPage() {
                 return;
             }
 
-            if (isModifierShortcut && !event.altKey && key === "g") {
-                if (event.shiftKey) {
-                    if (canUngroupSelectedNodes(selectedNodeIdsRef.current, nodesRef.current)) {
-                        event.preventDefault();
-                        ungroupSelection();
-                    }
-                    return;
+            if (isShortcut("ungroup")) {
+                if (canUngroupSelectedNodes(selectedNodeIdsRef.current, nodesRef.current)) {
+                    event.preventDefault();
+                    ungroupSelection();
                 }
+                return;
+            }
+
+            if (isShortcut("group")) {
                 if (canGroupSelectedNodes(selectedNodeIdsRef.current, nodesRef.current)) {
                     event.preventDefault();
                     groupSelection();
@@ -1626,19 +1647,19 @@ function InfiniteCanvasPage() {
                 return;
             }
 
-            if (isModifierShortcut && !event.altKey && key === "c") {
+            if (isShortcut("copy")) {
                 event.preventDefault();
                 copySelectedNodes();
                 return;
             }
 
-            if (isModifierShortcut && !event.altKey && key === "v") {
+            if (isShortcut("paste")) {
                 event.preventDefault();
                 if (!pasteCopiedNodes()) void pasteSystemClipboard();
                 return;
             }
 
-            if (event.key === "Delete" || event.key === "Backspace") {
+            if (isShortcut("delete")) {
                 if (selectedNodeIdsRef.current.size) {
                     deleteNodes(new Set(selectedNodeIdsRef.current));
                 } else if (selectedConnectionId) {
@@ -1646,7 +1667,7 @@ function InfiniteCanvasPage() {
                 }
             }
 
-            if (event.key === "Escape") {
+            if (isShortcut("escape")) {
                 setSelectedNodeIds(new Set());
                 setSelectedConnectionId(null);
                 setContextMenu(null);
@@ -1665,7 +1686,7 @@ function InfiniteCanvasPage() {
 
         window.addEventListener("keydown", handleKeyDown);
         return () => window.removeEventListener("keydown", handleKeyDown);
-    }, [copySelectedNodes, deleteConnection, deleteNodes, groupSelection, pasteCopiedNodes, pasteSystemClipboard, redoCanvas, selectedConnectionId, setConnecting, undoCanvas, ungroupSelection]);
+    }, [copySelectedNodes, deleteConnection, deleteNodes, groupSelection, pasteCopiedNodes, pasteSystemClipboard, redoCanvas, selectedConnectionId, setConnecting, shortcutBindings, undoCanvas, ungroupSelection]);
 
     const handleConnectStart = useCallback(
         (event: ReactMouseEvent, nodeId: string, handleType: "source" | "target") => {
@@ -2317,11 +2338,14 @@ function InfiniteCanvasPage() {
         setTitleEditing(false);
     }, [projectId, renameProject, titleDraft]);
 
-    const preventCanvasContextMenu = useCallback((event: ReactMouseEvent) => {
-        if ((event.target as HTMLElement).closest("[data-node-id]")) return;
+    const handleCanvasContextMenu = useCallback((event: ReactMouseEvent) => {
+        const target = event.target instanceof Element ? event.target : null;
+        if (target?.closest("[data-node-id],[data-connection-id],[data-canvas-no-zoom]")) return;
         event.preventDefault();
+        if (referencePickerNodeId) return;
         setContextMenu(null);
-    }, []);
+        setNodeCreatePosition(screenToCanvas(event.clientX, event.clientY));
+    }, [referencePickerNodeId, screenToCanvas]);
 
     const handleGenerateNode = useCallback(
         async (nodeId: string, mode: CanvasNodeGenerationMode, prompt: string) => {
@@ -3194,12 +3218,7 @@ function InfiniteCanvasPage() {
                         if (!referencePickerNodeId) handleCanvasMouseDown(event);
                     }}
                     onCanvasDeselect={referencePickerNodeId ? undefined : deselectCanvas}
-                    onCanvasDoubleClick={(event) => {
-                        if (referencePickerNodeId) return;
-                        setContextMenu(null);
-                        setNodeCreatePosition(screenToCanvas(event.clientX, event.clientY));
-                    }}
-                    onContextMenu={preventCanvasContextMenu}
+                    onContextMenu={handleCanvasContextMenu}
                     onDrop={handleDrop}
                 >
                     <svg className="absolute left-0 top-0 h-[10000px] w-[10000px] overflow-visible" style={{ pointerEvents: "none", transform: "translateZ(0)", zIndex: 0 }}>
