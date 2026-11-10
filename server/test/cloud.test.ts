@@ -24,10 +24,25 @@ test("PostgreSQL auth, isolation, revision conflicts, media quota", { skip: !pro
     await migrate(pool);
     await pool.query("TRUNCATE canvas_media,canvas_records,canvas_sessions,canvas_oauth_flows,canvas_users CASCADE");
     const codes = new Map<string, { challenge: string; user: string }>();
+    const walletSettings = { quota_display_type: "CUSTOM", quota_per_unit: 500000, usd_exchange_rate: 7, custom_currency_exchange_rate: 10 };
+    let accountStatus = 200;
+    let accountRequests = 0;
+    let walletSettingsRequests = 0;
     let provider: Server;
     provider = createServer(async (request, response) => {
         response.setHeader("Content-Type", "application/json");
-        if (request.url === "/api/canvas-oauth/token") {
+        if (request.url === "/api/status") {
+            walletSettingsRequests++;
+            return response.end(JSON.stringify({ success: true, data: walletSettings }));
+        }
+        if (request.url === "/api/user/self") {
+            accountRequests++;
+            response.statusCode = accountStatus;
+            if (accountStatus !== 200) return response.end();
+            const user = request.headers.authorization?.replace("Bearer ", "");
+            return response.end(JSON.stringify({ success: true, data: { id: user === "alice" ? 1 : 2, username: user, display_name: user, quota: 76089291, used_quota: 500000 } }));
+        }
+        if (request.url === "/api/oauth-provider/token") {
             let body = ""; for await (const chunk of request) body += chunk;
             const params = new URLSearchParams(body);
             const grant = codes.get(params.get("code") || "");
@@ -35,11 +50,11 @@ test("PostgreSQL auth, isolation, revision conflicts, media quota", { skip: !pro
             codes.delete(params.get("code")!);
             return response.end(JSON.stringify({ access_token: grant.user, refresh_token: `refresh-${grant.user}`, expires_in: 3600 }));
         }
-        if (request.url === "/api/canvas-oauth/userinfo") {
+        if (request.url === "/api/oauth-provider/userinfo") {
             const user = request.headers.authorization?.replace("Bearer ", "");
-            return response.end(JSON.stringify({ sub: user, username: user, display_name: user, avatar_url: "" }));
+            return response.end(JSON.stringify({ sub: user === "alice" ? "1" : user === "bob" ? "2" : "3", username: user, display_name: user, avatar_url: "", quota: 76089291, used_quota: 500000 }));
         }
-        if (request.url === "/api/canvas-oauth/credentials") return response.end(JSON.stringify({ apiKey: "sk-test", baseUrl: "http://localhost:33002" }));
+        if (request.url === "/api/oauth-provider/credentials") return response.end(JSON.stringify({ apiKey: "sk-test", baseUrl: "http://localhost:33002" }));
         response.statusCode = 404; response.end("{}");
     });
     await new Promise<void>((resolve) => provider.listen(0, "127.0.0.1", resolve));
@@ -88,7 +103,69 @@ test("PostgreSQL auth, isolation, revision conflicts, media quota", { skip: !pro
         const record = { domain: "canvas", id: "shared-id", baseRevision: 0, deleted: false, data: { id: "shared-id", title: "First" }, media: [] };
         await suite.test("authentication and CSRF fail closed", async () => {
             assert.equal((await app.inject({ url: "/api/sync/changes" })).statusCode, 401);
+            assert.equal((await app.inject({ url: "/api/account/overview" })).statusCode, 401);
             assert.equal((await app.inject({ method: "POST", url: "/api/sync/records", headers: { cookie: first, origin: "https://evil.invalid" }, payload: record })).statusCode, 403);
+        });
+        await suite.test("account overview uses the session user and storage quota", async () => {
+            const overview = await app.inject({ url: "/api/account/overview", headers });
+            assert.equal(overview.statusCode, 200, overview.body);
+            assert.equal(overview.json().user.displayId, "1");
+            assert.equal(overview.json().user.isAdmin, false);
+            assert.equal(overview.json().user.points, 76089291 / 500000 * 10);
+            assert.equal(overview.json().user.usedPoints, 10);
+            const session = await app.inject({ url: "/api/auth/session", headers });
+            assert.equal(session.json().user.points, overview.json().user.points);
+            assert.equal(session.json().user.usedPoints, 10);
+            assert.equal(overview.json().storage.quotaBytes, config.USER_STORAGE_BYTES);
+            assert.equal(new URL(overview.json().links.rechargeUrl).pathname, "/wallet");
+        });
+        await suite.test("wallet conversion follows the provider display settings", async () => {
+            try {
+                for (const [displayType, expected] of [["USD", 76089291 / 500000], ["CNY", 76089291 / 500000 * 7], ["TOKENS", 76089291]] as const) {
+                    walletSettings.quota_display_type = displayType;
+                    const overview = await app.inject({ url: "/api/account/overview", headers: { cookie: await login("alice") } });
+                    assert.equal(overview.statusCode, 200, overview.body);
+                    assert.equal(overview.json().user.points, expected);
+                }
+                walletSettings.quota_display_type = "CUSTOM";
+                walletSettings.custom_currency_exchange_rate = 20;
+                const overview = await app.inject({ url: "/api/account/overview", headers: { cookie: await login("alice") } });
+                assert.equal(overview.json().user.points, 76089291 / 500000 * 20);
+            } finally {
+                walletSettings.quota_display_type = "CUSTOM";
+                walletSettings.custom_currency_exchange_rate = 10;
+            }
+        });
+        await suite.test("account rate limits keep their status and actionable message", async () => {
+            const rateLimitHeaders = { cookie: await login("alice") };
+            accountStatus = 429;
+            try {
+                const overview = await app.inject({ url: "/api/account/overview", headers: rateLimitHeaders });
+                assert.equal(overview.statusCode, 429);
+                assert.equal(overview.json().message, "LLMRoam 请求过于频繁，请稍后重试");
+            } finally { accountStatus = 200; }
+            assert.equal((await app.inject({ url: "/api/account/overview", headers: rateLimitHeaders })).statusCode, 200);
+        });
+        await suite.test("account cache merges concurrent requests, expires after five minutes and isolates sessions", async (context) => {
+            let now = Date.now();
+            context.mock.method(Date, "now", () => now);
+            const cacheHeaders = { cookie: await login("alice") };
+            const otherHeaders = { cookie: await login("bob") };
+            const initialRequests = accountRequests;
+            const initialSettingsRequests = walletSettingsRequests;
+            const responses = await Promise.all([1, 2, 3].map(() => app.inject({ url: "/api/account/overview", headers: cacheHeaders })));
+            for (const response of responses) assert.equal(response.statusCode, 200, response.body);
+            assert.equal(accountRequests, initialRequests + 1);
+            assert.equal(walletSettingsRequests, initialSettingsRequests + 1);
+            now += 5 * 60 * 1000 - 1;
+            assert.equal((await app.inject({ url: "/api/account/overview", headers: cacheHeaders })).statusCode, 200);
+            assert.equal(accountRequests, initialRequests + 1);
+            now++;
+            assert.equal((await app.inject({ url: "/api/account/overview", headers: cacheHeaders })).statusCode, 200);
+            assert.equal(accountRequests, initialRequests + 2);
+            const other = await app.inject({ url: "/api/account/overview", headers: otherHeaders });
+            assert.equal(other.json().user.displayId, "2");
+            assert.equal(accountRequests, initialRequests + 3);
         });
         await suite.test("concurrent writes have exactly one winner; records isolate users", async () => {
             const results = await Promise.all([1, 2].map(() => app.inject({ method: "POST", url: "/api/sync/records", headers, payload: record })));

@@ -37,6 +37,7 @@ type CanvasStore = {
     deleteProjects: (ids: string[]) => void;
     replaceProjects: (projects: CanvasProject[], deletedProjects?: CanvasDeletedProject[]) => void;
     updateProject: (id: string, patch: Partial<Pick<CanvasProject, "nodes" | "connections" | "chatSessions" | "activeChatId" | "backgroundMode" | "showImageInfo" | "viewport">>) => void;
+    saveNow: () => Promise<void>;
 };
 
 const initialViewport: ViewportTransform = { x: 0, y: 0, k: 1 };
@@ -129,6 +130,17 @@ export const useCanvasStore = create<CanvasStore>()(
                 set((state) => ({
                     projects: state.projects.map((project) => (project.id === id ? { ...project, ...patch, updatedAt: new Date().toISOString() } : project)),
                 })),
+            saveNow: async () => {
+                const state = get();
+                const persistedState: PersistedCanvasState = { projects: state.projects, deletedProjects: state.deletedProjects };
+                const value = { state: persistedState, version: 0 };
+                queuedPersistState = persistedState;
+                if (saveTimer) {
+                    clearTimeout(saveTimer);
+                    saveTimer = null;
+                }
+                await localForageStorage.setItem(CANVAS_STORE_KEY, JSON.stringify(value));
+            },
         }),
         {
             name: CANVAS_STORE_KEY,

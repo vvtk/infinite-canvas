@@ -12,6 +12,13 @@ web/dist
 
 **/dist
 web/public/plugins
+
+# Local agent rules and private configuration
+AGENTS.md
+.agents/
+
+# Local-only tests; committed tests stay in their package-specific directories
+/test/
 plugins/canvas/*/dist
 plugins/canvas/*/node_modules
 web/public/plugins

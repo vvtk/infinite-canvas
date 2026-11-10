@@ -23,23 +23,25 @@ description: OAuth 应用注册、独立 API、PostgreSQL 和 S3 配置
 
 ## LLMRoam OAuth 应用注册
 
-当前按环境变量注册一个机密客户端（不是第三方登录提供商配置页面）：
+在 LLMRoam 管理后台的“身份验证 → OAuth 授权”中注册一个机密客户端，并将回调地址与浏览器来源精确登记：
 
 ```dotenv
-CANVAS_OAUTH_CLIENT_ID=infinite-canvas
-CANVAS_OAUTH_CLIENT_SECRET=与画布后端相同的随机密钥
-CANVAS_OAUTH_REDIRECT_URI=http://localhost:3000/api/auth/callback
-CANVAS_OAUTH_ISSUER=http://localhost:33002
-CANVAS_OAUTH_ENCRYPTION_KEY=独立的64位十六进制密钥
-CANVAS_ALLOWED_ORIGINS=http://localhost:3000
-CANVAS_OAUTH_CODE_SECONDS=300
-CANVAS_OAUTH_ACCESS_SECONDS=3600
-CANVAS_OAUTH_REFRESH_SECONDS=2592000
+Name: Infinite Canvas
+Client ID: infinite-canvas
+Redirect URI: http://localhost:3000/api/auth/callback
+Allowed browser origin: http://localhost:3000
+Permissions: api_key:read, api_key:write, api_key:reveal, model_inference:use, profile:read, wallet:read
+Code / Access / Authorization lifetime: 300 / 3600 / 2592000 seconds
+Enabled: on
 ```
 
-回调地址完全匹配，不支持通配符。生产环境发行者和画布地址使用 HTTPS。授权端点为 `/api/canvas-oauth/authorize`、`/token`、`/userinfo`、`/credentials`，权限是 `profile models`。授权页复用 LLMRoam 登录会话，拒绝个人访问令牌代替用户确认；PKCE 必须使用 S256。登录、MFA 和现有安全验证仍在 LLMRoam 完成。
+回调地址完全匹配，不支持通配符。生产环境发行者和画布地址使用 HTTPS。授权端点使用标准 `/api/oauth-provider/authorize`、`/token`、`/userinfo`；Canvas 专属模型凭据继续使用兼容的 `/api/oauth-provider/credentials`。权限必须使用已注册应用允许的明确 scope：`api_key:read api_key:write api_key:reveal model_inference:use profile:read wallet:read`。授权页复用 LLMRoam 登录会话，拒绝个人访问令牌代替用户确认；PKCE 必须使用 S256。登录、MFA 和现有安全验证仍在 LLMRoam 完成。
 
-模型请求由浏览器携带专用 API Key 直连 LLMRoam，消耗用户额度。`CANVAS_ALLOWED_ORIGINS` 是逗号分隔的精确来源列表；模型接口需允许 Authorization、Content-Type 及对应 GET/POST/OPTIONS 预检。已有网关/反代不得另行添加宽泛的 CORS 头。原始媒体所在 S3 桶保持私有，运行 `init-storage.ts` 只为画布来源配置 GET/POST/HEAD CORS。
+服务端默认使用 `LLMROAM_URL` 拼接 `/api/oauth-provider/authorize` 作为授权页面地址；如果授权页面部署在其他地址，可在 `server/.env` 设置完整的 `OAUTH_AUTHORIZE_URL` 覆盖该默认值。令牌、用户信息和凭据接口仍使用 `LLMROAM_URL`。
+
+测试阶段 `LLMROAM_URL` 和 `OAUTH_AUTHORIZE_URL` 均支持 HTTP；生产部署使用 HTTPS。画布 `PUBLIC_URL` 的非本机地址仍要求 HTTPS。
+
+模型请求由浏览器携带专用 API Key 直连 LLMRoam，消耗用户额度。LLMRoam 应用的 Allowed browser origins 是精确来源列表；模型接口需允许 Authorization、Content-Type 及对应 GET/POST/OPTIONS 预检。已有网关/反代不得另行添加宽泛的 CORS 头。原始媒体所在 S3 桶保持私有，运行 `init-storage.ts` 只为画布来源配置 GET/POST/HEAD CORS。
 
 专用 Key 仅存在当前账号的浏览器本地配置；自动添加 LLMRoam 服务商并读取模型，不更改已有模型选择。默认配置导出排除托管服务商，云同步递归去除密钥、密码和缩略图。账户菜单可撤销专用 Key；撤销后需重新授权才能创建新 Key。
 

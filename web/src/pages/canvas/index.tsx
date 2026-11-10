@@ -107,7 +107,7 @@ export default function CanvasPage() {
                 {!hydrated ? (
                     <section className="flex min-h-[360px] items-center justify-center border-y border-stone-200 text-sm text-stone-500 dark:border-stone-800">{t("canvas.loading")}</section>
                 ) : projects.length ? (
-                    <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-[repeat(auto-fit,minmax(320px,420px))] xl:justify-center">
+                    <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
                         {projects.map((project) => (
                             <CanvasProjectCard key={project.id} project={project} />
                         ))}

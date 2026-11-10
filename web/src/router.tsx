@@ -3,6 +3,8 @@ import { createBrowserRouter, Outlet } from "react-router-dom";
 import { AnalyticsTracker } from "@/components/layout/analytics-tracker";
 import UserLayout from "@/layouts/user-layout";
 import AssetsPage from "@/pages/assets";
+import AccountPage from "@/pages/account";
+import AdminPage from "@/pages/admin";
 import CanvasPage from "@/pages/canvas";
 import CanvasProjectPage from "@/pages/canvas/project";
 import ConfigPage from "@/pages/config";
@@ -29,6 +31,8 @@ export const router = createBrowserRouter([
             { path: "/canvas", element: <CanvasPage /> },
             { path: "/canvas/:id", element: <CanvasProjectPage /> },
             { path: "/config", element: <ConfigPage /> },
+            { path: "/account", element: <AccountPage /> },
+            { path: "/admin", element: <AdminPage /> },
         ],
     },
     { path: "*", element: <NotFound /> },

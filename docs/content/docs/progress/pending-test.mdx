@@ -5,7 +5,35 @@ description: Implemented changes that still need manual verification
 
 # Pending Tests
 
+- 请求客户端标识：画布后端发送给 LLMRoam 的状态、令牌交换与刷新、账号查询和专属凭据请求统一携带 `User-Agent: InfiniteCanvas`；对应的新审计日志“客户端”应显示 `InfiniteCanvas`。历史日志保留原记录，浏览器直接调用模型 API 的标识保持浏览器行为；本次未执行构建或测试。
+
+- 账号余额缓存：首次打开账号菜单或个人中心后，5 分钟内连续打开、跨页面切换或刷新应复用当前登录会话的服务端缓存，不再同步 LLMRoam 用户信息及换算配置；同时发起的请求只同步一次。缓存从成功获取时计时，命中不延长有效期，满 5 分钟后的下一次访问重新同步。不同登录会话隔离，退出登录清除对应缓存，后端重启后重新获取；云存储用量仍实时读取本地数据库。请求失败不缓存，下一次打开可重新获取。已补充并发、过期、隔离和失败后重试的回归用例，本次未执行构建或测试，浏览器显示待验收。
+
+- 账号余额加载：日常打开菜单和个人中心通过 OAuth access token 调用 LLMRoam `/api/user/self`，登录回调仍使用 `/api/oauth-provider/userinfo`；即使 OAuth 用户信息接口触发严格限流，账号余额仍应正常加载。已使用当前账号授权验证后端及前端代理的 `/api/account/overview` 均返回 200，余额换算为 `1,521.79`，浏览器菜单显示仍待验收。上游返回空响应体的 429 时，应提示“LLMRoam 请求过于频繁，请稍后重试”，不能误报服务不可用或要求重新登录；不新增自动重试，不调整上游限流配置。
+
+- 积分余额换算：刷新后重新打开账号菜单及个人中心，确认与 LLMRoam 同账号钱包余额一致；原始额度 `76,089,291`、`quota_per_unit=500000`、自定义积分汇率为 `10` 时应显示 `1,521.79`。后台调整显示汇率后，5 分钟缓存过期再打开菜单应按新配置换算；重新登录后的会话余额也应使用相同单位。换算配置不可用且没有有效缓存时应提示加载失败，不应显示原始额度充当积分。已补充后端回归用例，本次未执行构建或测试，真实账号显示仍待验收。
+
+- Canvas side navigation styling: verify the vertical rail keeps its border visible and uses the updated rounded outer frame and 40px rounded icon buttons in both themes.
+
+- Canvas project actions: click the three-dot button on a project row and confirm the dark themed menu shows Rename and Delete, with rename and delete actions still working for the current and other projects.
+
+- 账号登录与菜单：点击登录应显示仅含 LLMRoam 品牌头像和“授权登录”按钮的应用内弹窗，不出现账号密码输入框；点击授权后当前页面直接跳转到 OAuth 授权页，主页面通过服务端 `returnTo` 回到原路由和画布状态。授权成功后应回到原页面并完成账号初始化；拒绝授权时应回到原页面并提示失败，允许重新授权。登录后点击头像应显示用户名、ID、真实积分余额、云存储用量和进度条。普通用户只能看到个人中心和退出登录，管理员还应看到管理后台；充值应打开 LLMRoam 钱包页，个人中心与管理员后台路由应分别验证登录和管理员权限，退出登录、云同步和撤销凭据仍需保持可用。
+
+- OAuth 授权地址：不设置 `OAUTH_AUTHORIZE_URL` 时应使用 `LLMROAM_URL/api/oauth-provider/authorize`；设置完整地址后登录应跳转到该地址，同时令牌交换和用户信息请求应使用标准 `/api/oauth-provider/token`、`/api/oauth-provider/userinfo`，专属模型凭据继续使用 `/api/oauth-provider/credentials`。
+
+- LLMRoam HTTP 联调：将 `LLMROAM_URL` 和 `OAUTH_AUTHORIZE_URL` 配置为测试服务的 HTTP 地址，确认后端可启动；数据库可用后验证授权跳转与令牌交换。画布非本机 `PUBLIC_URL` 仍要求 HTTPS。
+
+- Canvas library naming and spacing: verify the side navigation uses the library icon and “画布库” label, and the project panel button reads “创建画布” with visible spacing on all four sides.
+
+- Canvas sidebar visual refinement: verify that My Projects and Tutorial Center show right-aligned counts, both groups expand and collapse without losing their counts, the current project uses the canvas icon and active theme, and other projects use folder icons. Switch projects and confirm the sidebar remains mounted while only the canvas area shows its loading state.
+
+- Canvas project sidebar: in `/canvas/:id`, open the left rail and confirm Projects and Tutorial Center are available. Create a project and confirm it opens immediately, switch projects, rename and refresh to confirm persistence, delete the current project and confirm navigation to another project or `/canvas`, and click both tutorial entries to confirm navigation.
+
 The current release needs manual verification in these areas:
+
+- Canvas project list: at desktop width, project cards should display three per row with consistent gaps; at narrow widths, the list should fall back to two and then one column without horizontal overflow.
+
+- Canvas side navigation: open a canvas and confirm the left rail is a rounded floating capsule with Projects, Tutorial Center, Canvas, Assets, Prompt Library, and Save, vertically centered with a left inset. It should not consume canvas layout width, and the top bar should not show a separate side-panel collapse/expand button. Projects and Tutorial Center should open their full-height content panels with a title and back arrow. The content panel should occupy the left layout width so the canvas visibly shrinks beside it; the back arrow should hide the panel and restore the capsule without losing list state. Save should immediately persist the current canvas locally and show a saved message, while automatic saving continues to work in both light and dark themes. Closing and reopening the side panel should preserve the expected positioning, and resizing should still work in the content view.
 
 - LLMRoam 登录与云同步：按 [部署与验收说明](/docs/development/cloud-sync) 验证真实 OAuth 授权、浏览器直连模型、双浏览器同步及跨账号隔离。默认单媒体 512 MiB、每账号 2 GiB；超限保留本地。已通过 PostgreSQL 后端回归与真实 S3 签名上传/校验/下载、LLMRoam 三数据库 OAuth 回归和凭据缓存完整性测试；真实账号端到端、两浏览器编辑与生产 Compose 尚待确认。
 

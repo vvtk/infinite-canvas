@@ -1,13 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { Download, Home, Images, Menu, PanelLeftClose, PanelLeftOpen, Plus, Redo2, Trash2, Undo2, Upload } from "lucide-react";
-import { Dropdown, Tooltip } from "antd";
+import { Download, Home, Images, Menu, Plus, Redo2, Trash2, Undo2, Upload } from "lucide-react";
+import { Dropdown } from "antd";
 import { useTranslation } from "react-i18next";
 
 import { CanvasShortcutsDialog } from "@/components/canvas/canvas-shortcuts-dialog";
 import { UserStatusActions } from "@/components/layout/user-status-actions";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { canvasShortcutLabel } from "@/lib/canvas/keyboard-shortcuts";
-import { useCanvasSidePanelStore } from "@/stores/use-canvas-side-panel-store";
 import { useCanvasShortcutStore } from "@/stores/canvas/use-canvas-shortcut-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 
@@ -59,8 +58,6 @@ export function CanvasTopBar({
     const shortcutBindings = useCanvasShortcutStore((state) => state.bindings);
     const titleRef = useRef<HTMLDivElement>(null);
     const [shortcutsOpen, setShortcutsOpen] = useState(false);
-    const sidePanelOpen = useCanvasSidePanelStore((state) => state.panelOpen);
-    const toggleSidePanel = useCanvasSidePanelStore((state) => state.togglePanel);
 
     useEffect(() => {
         if (!isTitleEditing) return;
@@ -75,17 +72,6 @@ export function CanvasTopBar({
         <>
             <div className="pointer-events-none absolute left-0 right-0 top-0 z-50 flex h-16 items-center justify-between pl-1 pr-4">
                 <div className="pointer-events-auto flex min-w-0 items-center gap-2">
-                    <Tooltip title={sidePanelOpen ? t("canvas.collapsePanel") : t("canvas.expandPanel")}>
-                        <button
-                            type="button"
-                            onClick={toggleSidePanel}
-                            aria-label={sidePanelOpen ? t("canvas.collapsePanel") : t("canvas.expandPanel")}
-                            className="grid size-7 place-items-center rounded-full transition hover:bg-black/5 dark:hover:bg-white/10"
-                            style={{ color: theme.node.text }}
-                        >
-                            {sidePanelOpen ? <PanelLeftClose className="size-4" /> : <PanelLeftOpen className="size-4" />}
-                        </button>
-                    </Tooltip>
                     <Dropdown
                         trigger={["click"]}
                         menu={{

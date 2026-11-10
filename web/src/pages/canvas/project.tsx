@@ -224,6 +224,7 @@ function InfiniteCanvasPage() {
     const createProject = useCanvasStore((state) => state.createProject);
     const openProject = useCanvasStore((state) => state.openProject);
     const updateProject = useCanvasStore((state) => state.updateProject);
+    const saveNow = useCanvasStore((state) => state.saveNow);
     const renameProject = useCanvasStore((state) => state.renameProject);
     const deleteProjects = useCanvasStore((state) => state.deleteProjects);
     const currentProject = useCanvasStore((state) => state.projects.find((project) => project.id === projectId));
@@ -458,6 +459,21 @@ function InfiniteCanvasPage() {
     useEffect(() => {
         if (!hydrated) return;
         setProjectLoaded(false);
+        generationRequestsRef.current.forEach((request) => request.controller.abort());
+        generationRequestsRef.current.clear();
+        setRunningNodeId(null);
+        setSelectedNodeIds(new Set());
+        setSelectedConnectionId(null);
+        setHoveredNodeId(null);
+        setConnectingParams(null);
+        setConnectionTargetNodeId(null);
+        setPendingConnectionCreate(null);
+        setSelectionBox(null);
+        setContextMenu(null);
+        setNodeCreatePosition(null);
+        setPreviewNodeId(null);
+        setHoverPreviewNodeId(null);
+        setReferencePickerNodeId(null);
         const project = openProject(projectId);
         if (!project) {
             navigate("/canvas", { replace: true });
@@ -563,6 +579,11 @@ function InfiniteCanvasPage() {
             if (viewportSaveTimerRef.current) clearTimeout(viewportSaveTimerRef.current);
         };
     }, [projectId, projectLoaded, updateProject, viewport]);
+
+    const saveCurrentProject = useCallback(async () => {
+        await saveNow();
+        message.success(t("canvas.sidePanel.saved"));
+    }, [message, saveNow, t]);
 
     useLayoutEffect(() => {
         nodesRef.current = nodes;
@@ -3175,12 +3196,11 @@ function InfiniteCanvasPage() {
     }
     const retainedPreview = retainedPreviewRef.current;
 
-    if (!projectLoaded) return <CanvasRefreshShell />;
-
     return (
-        <main className="flex h-full min-h-0 overflow-hidden" style={{ background: theme.canvas.background, color: theme.node.text }}>
-            <CanvasSidePanel nodes={nodes} selectedNodeIds={selectedNodeIds} onFocusNode={focusNode} onPreviewNode={setPreviewNodeId} onHoverNode={setHoverPreviewNodeId} onInsertAsset={handleAssetInsert} />
+        <main className="relative flex h-full min-h-0 overflow-hidden" style={{ background: theme.canvas.background, color: theme.node.text }}>
+            <CanvasSidePanel projectId={projectId} nodes={nodes} selectedNodeIds={selectedNodeIds} onFocusNode={focusNode} onPreviewNode={setPreviewNodeId} onHoverNode={setHoverPreviewNodeId} onInsertAsset={handleAssetInsert} onSave={saveCurrentProject} />
             <section className="relative min-w-0 flex-1 overflow-hidden">
+                {!projectLoaded ? <div className="absolute inset-0 z-[70] grid place-items-center" style={{ background: `color-mix(in srgb, ${theme.canvas.background} 82%, transparent)` }}><div className="rounded-lg border px-4 py-2 text-sm opacity-70" style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border }}>{t("canvas.opening")}</div></div> : null}
                 <CanvasTopBar
                     title={currentProject?.title || t("canvas.projectPage.untitledCanvas")}
                     titleDraft={titleDraft}
