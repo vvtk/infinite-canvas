@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- [调整] Docker 发布镜像切换到当前仓库的 GHCR 命名空间，并同步 Compose 与自动发布配置。
+- [调整] Docker 发布镜像统一使用 `llmroam/infinite-canvas`，并同步 Compose 与自动发布配置。
 
 - [修复] 音频声音按钮改为单列完整显示 Qwen 音色 ID，避免长名称溢出或被压缩。
 
