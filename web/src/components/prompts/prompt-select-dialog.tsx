@@ -1,6 +1,6 @@
 import { Search } from "lucide-react";
 import { type UIEvent, useEffect, useState } from "react";
-import { App, Empty, Input, Modal, Spin, Tag } from "antd";
+import { App, Alert, Button, Empty, Input, Modal, Spin, Tag } from "antd";
 import { useTranslation } from "react-i18next";
 
 import { ALL_PROMPTS_OPTION } from "@/services/api/prompts";
@@ -58,6 +58,7 @@ export function PromptSelectDialog({ open, onOpenChange, onSelect }: { open: boo
                     </div>
                 </aside>
                 <section className="flex min-h-0 min-w-0 flex-col">
+                    {query.error?<Alert type="error" title="公共提示词库加载失败" action={<Button onClick={()=>void query.refetch()}>重试</Button>}/>:null}
                     <Input size="large" prefix={<Search className="size-4 text-stone-400" />} value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder={t("prompts.searchTitle")} />
                     <div className="thin-scrollbar mt-4 min-h-0 flex-1 overflow-y-auto pr-2" data-canvas-no-zoom onScroll={handleListScroll} onWheelCapture={(event) => event.stopPropagation()}>
                         {query.isLoading ? (

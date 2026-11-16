@@ -8,15 +8,19 @@ import { ModelPicker } from "@/components/model-picker";
 import { videoResolutionOptions } from "@/components/video-settings-panel";
 import { ChannelEditorDrawer } from "@/components/layout/channel-editor-drawer";
 import { ConfigLocalProxy } from "@/components/layout/config-local-proxy";
-import { ConfigPromptSources } from "@/components/layout/config-prompt-sources";
 import { ConfigLocalStorage } from "@/components/layout/config-local-storage";
+import { SystemChannelConfigCard } from "@/components/system-channel/config-card";
+import { refreshSystemChannel } from "@/services/api/system-channel";
+import { useSiteStore, privateChannelsHidden } from "@/stores/use-site-store";
+import { useUserStore } from "@/stores/use-user-store";
+import {isAdminRole} from "../../../../shared/roles";
 import type { AppLocale } from "@/i18n";
 import { exportAppConfig, importAppConfig } from "@/services/config-file";
 import { syncAppDataToWebdav, type AppSyncDomainKey, type AppSyncProgressEvent } from "@/services/app-sync";
 import { testWebdavConnection, WEBDAV_MANIFEST_FILE_NAME } from "@/services/webdav-sync";
-import { audioFormatOptions, audioVoiceOptions, normalizeAudioSpeedValue } from "@/lib/audio-generation";
+import { audioFormatOptions, audioVoiceOptions, normalizeAudioSpeedValue, normalizeAudioVoiceValue } from "@/lib/audio-generation";
 import { computeMediaSize, inferMediaRatio, inferMediaScale, mediaScaleOptions, parseVideoResolution } from "@/lib/media-size";
-import { createModelChannel, modelOptionsFromChannels, normalizeModelOptionValue, selectableModelsByCapability, useConfigStore, type AiConfig, type ApiCallFormat, type ConfigTabKey, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
+import { createModelChannel, modelOptionsFromChannels, normalizeModelOptionValue, selectableModelsByCapability, useConfigStore, useEffectiveConfig, type AiConfig, type ApiCallFormat, type ConfigTabKey, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
 
 type ModelGroup = {
     capability: ModelCapability;
@@ -49,7 +53,7 @@ function createWebdavDomainProgress(): Record<AppSyncDomainKey, WebdavDomainProg
     );
 }
 
-export function AppConfigPanel({ showDoneButton = false, initialTab = "channels" }: { showDoneButton?: boolean; initialTab?: ConfigTabKey }) {
+export function AppConfigPanel({ showDoneButton = false, initialTab = "system-channel" }: { showDoneButton?: boolean; initialTab?: ConfigTabKey }) {
     const { message } = App.useApp();
     const { i18n, t } = useTranslation();
     const configInputRef = useRef<HTMLInputElement>(null);
@@ -60,6 +64,10 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
     const [webdavSyncStatus, setWebdavSyncStatus] = useState("");
     const [webdavDomainProgress, setWebdavDomainProgress] = useState(createWebdavDomainProgress);
     const config = useConfigStore((state) => state.config);
+    const site = useSiteStore(state => state.settings);
+    const user = useUserStore(state => state.user);
+    const hidePrivateChannels = site?.hidePrivateChannels === true && !user?.isAdmin && !isAdminRole(user?.role);
+    const modelConfig = useEffectiveConfig();
     const webdav = useConfigStore((state) => state.webdav);
     const updateConfig = useConfigStore((state) => state.updateConfig);
     const updateWebdavConfig = useConfigStore((state) => state.updateWebdavConfig);
@@ -67,13 +75,19 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
     const setConfigDialogOpen = useConfigStore((state) => state.setConfigDialogOpen);
     const clearPromptContinue = useConfigStore((state) => state.clearPromptContinue);
     const webdavReady = Boolean(webdav.url.trim());
-    const editingChannel = config.channels.find((channel) => channel.id === editingChannelId) || null;
+    const editingChannel = config.channels.find((channel) => channel.id === editingChannelId && !channel.managedAccount) || null;
     const locale = i18n.resolvedLanguage as AppLocale;
     const imageResolutionOptions = mediaScaleOptions.map((value) => ({ value, label: value === "auto" ? t("settingsPanels.common.auto") : value.toUpperCase() }));
     useEffect(() => setActiveTab(initialTab), [initialTab]);
+    useEffect(() => { void refreshSystemChannel(); }, []);
+    useEffect(() => {
+        if (!hidePrivateChannels) return;
+        if (activeTab === "channels" || activeTab === "preferences") setActiveTab("system-channel");
+        setEditingChannelId("");
+    }, [hidePrivateChannels, activeTab]);
 
     const saveConfig = (nextConfig: AiConfig) => {
-        (Object.keys(nextConfig) as Array<keyof AiConfig>).forEach((key) => updateConfig(key, nextConfig[key]));
+        useConfigStore.setState({ config: nextConfig });
     };
 
     const finishConfig = () => {
@@ -98,13 +112,15 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
     const updateChannels = (channels: ModelChannel[]) => saveConfig(withChannels(config, channels));
 
     const addChannel = () => {
+        if (privateChannelsHidden()) return;
         const channel = createModelChannel({ name: t("config.channels.numberedName", { count: config.channels.length + 1 }) });
         updateChannels([...config.channels, channel]);
         setEditingChannelId(channel.id);
     };
 
     const deleteChannel = (id: string) => {
-        if (config.channels.length <= 1) {
+        if (privateChannelsHidden()) return;
+        if (config.channels.filter(channel => !channel.managedAccount).length <= 1) {
             message.warning(t("config.channels.keepOne"));
             return;
         }
@@ -112,6 +128,7 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
     };
 
     const saveChannel = (channel: ModelChannel) => {
+        if (privateChannelsHidden()) return;
         updateChannels(config.channels.map((item) => (item.id === channel.id ? channel : item)));
     };
 
@@ -180,9 +197,14 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                 </div>
             </div>
             <Tabs
-                activeKey={activeTab}
+                activeKey={hidePrivateChannels && (activeTab === "channels" || activeTab === "preferences") ? "system-channel" : activeTab}
                 onChange={(key) => setActiveTab(key as ConfigTabKey)}
                 items={[
+                    {
+                        key: "system-channel",
+                        label: "系统渠道",
+                        children: <SystemChannelConfigCard />,
+                    },
                     {
                         key: "channels",
                         label: t("config.tabs.channels"),
@@ -195,7 +217,7 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                                     </Button>
                                 </div>
                                 <div className="space-y-2">
-                                    {config.channels.map((channel) => (
+                                    {config.channels.filter(channel => !channel.managedAccount).map((channel) => (
                                         <div key={channel.id} className="flex items-center justify-between gap-3 rounded-lg border border-stone-200 px-4 py-3 dark:border-stone-800">
                                             <div className="min-w-0">
                                                 <div className="truncate text-sm font-semibold">{channel.name || t("config.channels.unnamed")}</div>
@@ -216,20 +238,16 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                         ),
                     },
                     {
-                        key: "local-proxy",
-                        label: t("config.tabs.localProxy"),
-                        children: <ConfigLocalProxy />,
-                    },
-                    {
                         key: "preferences",
                         label: t("config.tabs.preferences"),
                         children: (
                             <Form layout="vertical" requiredMark={false}>
+                                <p className="mb-4 text-xs text-muted-foreground">生成参数用于私人渠道；系统渠道的参数请在「系统渠道」中个性化配置。</p>
                                 <div className="mb-2 text-sm font-semibold">{t("config.preferences.defaultModels")}</div>
                                 <div className="mb-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
                                     {modelGroups.map((group) => (
                                         <Form.Item key={group.modelKey} label={t(group.labelKey)} className="mb-0">
-                                            <ModelPicker config={config} value={config[group.modelKey]} onChange={(model) => updateConfig(group.modelKey, model)} capability={group.capability} fullWidth />
+                                            <ModelPicker config={modelConfig} value={modelConfig[group.modelKey]} onChange={(model) => updateConfig(group.modelKey, model)} capability={group.capability} fullWidth />
                                         </Form.Item>
                                     ))}
                                 </div>
@@ -252,7 +270,7 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                                         <Select value={parseVideoResolution(config.vquality)} options={videoResolutionOptions} onChange={(value) => updateConfig("vquality", value)} />
                                     </Form.Item>
                                     <Form.Item label={t("config.preferences.audioVoice")} className="mb-4">
-                                        <Select value={config.audioVoice} options={audioVoiceOptions} onChange={(value) => updateConfig("audioVoice", value)} />
+                                        <Select value={normalizeAudioVoiceValue(config.audioVoice)} options={audioVoiceOptions} onChange={(value) => updateConfig("audioVoice", value)} />
                                     </Form.Item>
                                     <Form.Item label={t("config.preferences.audioFormat")} className="mb-4">
                                         <Select value={config.audioFormat} options={audioFormatOptions} onChange={(value) => updateConfig("audioFormat", value)} />
@@ -297,9 +315,9 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                         ),
                     },
                     {
-                        key: "prompt-sources",
-                        label: t("config.tabs.promptSources"),
-                        children: <ConfigPromptSources />,
+                        key: "local-proxy",
+                        label: t("config.tabs.localProxy"),
+                        children: <ConfigLocalProxy />,
                     },
                     {
                         key: "webdav",
@@ -350,7 +368,7 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                         label: t("config.tabs.localStorage"),
                         children: <ConfigLocalStorage active={activeTab === "local-storage"} />,
                     },
-                ]}
+                ].filter(item => !hidePrivateChannels || (item.key !== "channels" && item.key !== "preferences"))}
             />
             {showDoneButton ? (
                 <div className="mt-4 flex justify-end">
@@ -359,7 +377,7 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                     </Button>
                 </div>
             ) : null}
-            <ChannelEditorDrawer open={Boolean(editingChannel)} channel={editingChannel} onSave={saveChannel} onClose={() => setEditingChannelId("")} />
+            <ChannelEditorDrawer open={!hidePrivateChannels && Boolean(editingChannel)} channel={editingChannel} onSave={saveChannel} onClose={() => setEditingChannelId("")} />
         </>
     );
 }
@@ -410,7 +428,7 @@ function withChannels(config: AiConfig, channels: ModelChannel[]): AiConfig {
 function pickDefaultModel(config: AiConfig, capability: ModelCapability, current: string) {
     const options = selectableModelsByCapability(config, capability);
     const normalized = normalizeModelOptionValue(current, config.channels);
-    return options.includes(normalized) ? normalized : options[0] || "";
+    return normalized || options[0] || "";
 }
 
 function normalizeImageCount(value: string) {

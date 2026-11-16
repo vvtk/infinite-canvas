@@ -29,9 +29,9 @@ export function AudioSettingsPanel({ config, onConfigChange, theme, showTitle = 
             <div className={className} style={{ color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()}>
                 {showTitle ? <div className="text-lg font-semibold">{t("settingsPanels.audio.title")}</div> : null}
                 <SettingGroup title={t("settingsPanels.audio.voice")} color={theme.node.muted}>
-                    <div className="grid grid-cols-3 gap-2.5">
+                    <div className="grid grid-cols-1 gap-2.5">
                         {audioVoiceOptions.map((item) => (
-                            <OptionPill key={item.value} selected={voice === item.value} theme={theme} onClick={() => onConfigChange("audioVoice", item.value)}>
+                            <OptionPill key={item.value} className="h-auto min-w-0 w-full whitespace-normal break-all px-3 py-2 leading-5" selected={voice === item.value} theme={theme} onClick={() => onConfigChange("audioVoice", item.value)}>
                                 {item.label}
                             </OptionPill>
                         ))}
@@ -82,9 +82,9 @@ export function AudioSettingsPanel({ config, onConfigChange, theme, showTitle = 
     );
 }
 
-function OptionPill({ selected, theme, onClick, children }: { selected: boolean; theme: CanvasTheme; onClick: () => void; children: ReactNode }) {
+function OptionPill({ selected, theme, onClick, children, className = "" }: { selected: boolean; theme: CanvasTheme; onClick: () => void; children: ReactNode; className?: string }) {
     return (
-        <button type="button" className="h-9 cursor-pointer rounded-full border px-2 text-sm transition hover:opacity-80" style={{ background: "transparent", borderColor: selected ? theme.node.text : theme.node.stroke, color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()} onClick={onClick}>
+        <button type="button" className={`h-9 cursor-pointer rounded-full border px-2 text-sm transition hover:opacity-80 ${className}`} style={{ background: "transparent", borderColor: selected ? theme.node.text : theme.node.stroke, color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()} onClick={onClick}>
             {children}
         </button>
     );

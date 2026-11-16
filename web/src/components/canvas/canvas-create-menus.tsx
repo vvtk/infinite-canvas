@@ -78,12 +78,12 @@ export function ConnectionCreateOption({ theme, icon, title, description, onClic
     );
 }
 
-export function NodeCreateMenu({ position, scale = 1, onCreate, onClose }: { position: Position; scale?: number; onCreate: (type: string) => void; onClose: () => void }) {
+export function NodeCreateMenu({ position, scale = 1, builtinsOnly = false, onCreate, onClose }: { position: Position; scale?: number; builtinsOnly?: boolean; onCreate: (type: string) => void; onClose: () => void }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const { t } = useTranslation();
     useNodeRegistryVersion();
     const menuRef = useRef<HTMLDivElement>(null);
-    const definitions = listNodeDefinitions().filter((def) => def.showInCreateMenu !== false);
+    const definitions = listNodeDefinitions().filter((def) => def.showInCreateMenu !== false && (!builtinsOnly || Object.values(CanvasNodeType).includes(def.type as CanvasNodeType)));
     // Close automatically when clicking outside the menu.
     useEffect(() => {
         const handlePointerDown = (event: PointerEvent) => {

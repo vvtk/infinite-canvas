@@ -4,6 +4,7 @@ import { z } from "zod";
 import { transaction } from "./db.js";
 import type { Session } from "./auth.js";
 import type { Config } from "./config.js";
+import { requireCloudStorage, storageQuota, storageUsage } from "./management.js";
 
 export const recordSchema = z.object({
     domain: z.enum(["canvas", "assets", "image-workbench", "video-workbench"]), id: z.string().min(1),
@@ -21,6 +22,7 @@ export function recordRoutes(app: FastifyInstance, pool: Pool, config: Config, r
         const { userId } = await requireSession(request);
         const { cursor } = z.object({ cursor: z.coerce.number().int().nonnegative().default(0) }).parse(request.query);
         return transaction(pool, async (db) => {
+            await requireCloudStorage(db, config);
             // Read a consistent watermark; writes use the same user lock.
             const user = await db.query("SELECT revision FROM canvas_users WHERE id=$1 FOR SHARE", [userId]);
             const rows = await db.query("SELECT domain,id,revision,deleted,data,media FROM canvas_records WHERE user_id=$1 AND revision>$2 ORDER BY revision", [userId, cursor]);
@@ -32,6 +34,7 @@ export function recordRoutes(app: FastifyInstance, pool: Pool, config: Config, r
         const record = recordSchema.parse(request.body);
         rejectSecrets(record.data);
         const result = await transaction(pool, async (db) => {
+            await requireCloudStorage(db, config);
             const user = await db.query("SELECT revision FROM canvas_users WHERE id=$1 FOR UPDATE", [userId]);
             const existing = await db.query("SELECT domain,id,revision,deleted,data,media FROM canvas_records WHERE user_id=$1 AND domain=$2 AND id=$3", [userId, record.domain, record.id]);
             const remote = existing.rows[0];
@@ -42,7 +45,7 @@ export function recordRoutes(app: FastifyInstance, pool: Pool, config: Config, r
             }
             if (!record.deleted) {
                 const usage = await db.query("SELECT (SELECT COALESCE(SUM(bytes),0) FROM canvas_media WHERE user_id=$1 AND (ready OR expires_at>now())) + (SELECT COALESCE(SUM(octet_length(data::text)),0) FROM canvas_records WHERE user_id=$1 AND NOT deleted AND NOT(domain=$2 AND id=$3)) + octet_length($4::jsonb::text) AS bytes", [userId, record.domain, record.id, JSON.stringify(record.data)]);
-                if (Number(usage.rows[0].bytes)>config.USER_STORAGE_BYTES) throw Object.assign(new Error("云存储额度不足，本地数据已保留"), { statusCode: 413 });
+                if (Number(usage.rows[0].bytes) > await storageQuota(db,config,userId) && Number(usage.rows[0].bytes) > await storageUsage(db,userId)) throw Object.assign(new Error("云存储额度不足，本地数据已保留"), { statusCode: 413 });
             }
             const revision = Number(user.rows[0].revision) + 1;
             await db.query("UPDATE canvas_users SET revision=$2 WHERE id=$1", [userId, revision]);

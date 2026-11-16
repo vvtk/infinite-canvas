@@ -7,5 +7,13 @@ description: 当前项目后续值得处理的事项
 
 本文档用来记录当前项目后续比较值得处理的事项。
 
+AI 教程节点流程已实现，画布全屏编辑、同款侧栏与教程流程库新建切换、保存返回后台、示例媒体、画布插入与权限验收见[待测试](/zh-CN/docs/progress/pending-test)，不再列为待开发事项；侧栏布局及切换取消等仍待人工确认。
+
+登录失效退出、LLMRoam 共享凭据及私人渠道隐藏开关已实现，验收见[待测试](/zh-CN/docs/progress/pending-test)，不再列为待开发事项。
+
+系统渠道管理与本地个性化配置已实现，相关权限、请求参数、账号隔离和视频恢复验收见[待测试](/zh-CN/docs/progress/pending-test)，不再列为待开发事项。
+
 - 本地 Agent 接入后续：按[本地 Agent 接入规划](/zh-CN/docs/progress/local-agent-integration-plan)把 Claude Code CLI Adapter 升级为 Claude Agent SDK Adapter，并完善工具队列体验。
 - Agent Skill 后续：补充网络检索安装、Skill 资源文件管理和可控的本地记忆沉淀。
+- 公共来源网络：来源请求使用独立直连 Agent，在当前网络拉取 GitHub 返回 `ECONNRESET`；需支持受控代理访问，同时保留逐跳 DNS 与公开地址校验，再验收 7 个默认来源的真实同步。
+- 云存储后续：增加私有与公共未引用媒体、失败恢复副本及未登记对象的引用安全回收。存储池管理、迁移源副本清理、手动关联数据备份恢复和用户云存储开关已实现并移入待验收；删除记录仍不自动回收原始媒体。

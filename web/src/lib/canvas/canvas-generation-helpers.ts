@@ -1,4 +1,4 @@
-import { defaultConfig, resolveModelForCapability, type AiConfig } from "@/stores/use-config-store";
+import { defaultConfig, getEffectiveConfig, resolveModelForCapability, type AiConfig } from "@/stores/use-config-store";
 import i18n from "@/i18n";
 import { ensureImagePreview, resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { resolveMediaUrl } from "@/services/file-storage";
@@ -48,7 +48,7 @@ export async function hydrateCanvasImages(nodes: CanvasNodeData[]) {
             const metadata = node.metadata;
             const content = metadata?.content;
             if ((node.type === CanvasNodeType.Video || node.type === CanvasNodeType.Audio) && metadata?.storageKey) return { ...node, metadata: { ...metadata, content: await resolveMediaUrl(metadata.storageKey, content) } };
-            if (node.type !== CanvasNodeType.Image || !metadata || !content) return node;
+            if (node.type !== CanvasNodeType.Image || !metadata) return node;
             const images = await Promise.all(
                 (metadata.images || []).map(async (image) => {
                     if (!image.content) return image;
@@ -56,6 +56,7 @@ export async function hydrateCanvasImages(nodes: CanvasNodeData[]) {
                     return { ...image, content: await resolveImageUrl(image.storageKey, image.content) };
                 }),
             );
+            if (!content) return { ...node, metadata: { ...metadata, images } };
             if (metadata.storageKey) {
                 void ensureImagePreview(metadata.storageKey);
                 return { ...node, metadata: { ...metadata, content: await resolveImageUrl(metadata.storageKey, content), images } };
@@ -103,9 +104,12 @@ export function getInputSummary(inputs: NodeGenerationInput[]) {
 }
 
 export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | undefined, mode: CanvasNodeGenerationMode): AiConfig {
+    config = getEffectiveConfig(config, mode);
+    const model = resolveModelForCapability(config, node?.metadata?.model, mode);
+    config = getEffectiveConfig(config, mode, model);
     return {
         ...config,
-        model: resolveModelForCapability(config, node?.metadata?.model, mode),
+        model,
         reasoningEffort: node?.metadata?.reasoningEffort || config.reasoningEffort || defaultConfig.reasoningEffort,
         quality: node?.metadata?.quality || config.quality || defaultConfig.quality,
         size: node?.metadata?.size || config.size || defaultConfig.size,
@@ -118,7 +122,7 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
         audioVoice: node?.metadata?.audioVoice || config.audioVoice || defaultConfig.audioVoice,
         audioFormat: node?.metadata?.audioFormat || config.audioFormat || defaultConfig.audioFormat,
         audioSpeed: node?.metadata?.audioSpeed || config.audioSpeed || defaultConfig.audioSpeed,
-        audioInstructions: node?.metadata?.audioInstructions || config.audioInstructions || defaultConfig.audioInstructions,
+        audioInstructions: node?.metadata?.audioInstructions ?? config.audioInstructions ?? defaultConfig.audioInstructions,
         count: String(node?.metadata?.count || (mode === "image" ? config.canvasImageCount || config.count : config.count) || defaultConfig.count),
     };
 }

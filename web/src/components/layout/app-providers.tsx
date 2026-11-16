@@ -14,6 +14,8 @@ import type { AppLocale } from "@/i18n";
 import { getAntThemeConfig } from "@/lib/app-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
 
+import { useSiteStore } from "@/stores/use-site-store";
+
 const queryClient = new QueryClient({
     defaultOptions: {
         queries: {
@@ -26,6 +28,7 @@ const queryClient = new QueryClient({
 
 export function AppProviders({ children }: { children: ReactNode }) {
     const { i18n, t } = useTranslation();
+    const site = useSiteStore((state)=>state.settings);
     const theme = useThemeStore((state) => state.theme);
     const dark = theme === "dark";
     const locale = i18n.resolvedLanguage as AppLocale;
@@ -37,10 +40,10 @@ export function AppProviders({ children }: { children: ReactNode }) {
 
     useEffect(() => {
         document.documentElement.lang = locale;
-        document.title = t("meta.title");
-        document.querySelector('meta[name="description"]')?.setAttribute("content", t("meta.description"));
+        document.title = site?.siteName || t("meta.title");
+        document.querySelector('meta[name="description"]')?.setAttribute("content", site?.description || t("meta.description"));
         dayjs.locale(locale === "zh-CN" ? "zh-cn" : "en");
-    }, [locale, t]);
+    }, [locale, t, site]);
 
     return (
         <ConfigProvider locale={locale === "zh-CN" ? zhCN : enUS} theme={getAntThemeConfig(dark)}>

@@ -1,7 +1,8 @@
 FROM node:22-alpine
-WORKDIR /app
+WORKDIR /app/server
 COPY server/package*.json ./
 RUN npm ci --omit=dev
+COPY shared /app/shared
 COPY server/src ./src
 COPY server/migrations ./migrations
 USER node

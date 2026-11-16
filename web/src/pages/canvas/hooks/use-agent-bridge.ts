@@ -9,6 +9,7 @@ import type { CanvasConnection, CanvasNodeData, ContextMenuState, ViewportTransf
 type GenerateNodeRef = MutableRefObject<((nodeId: string, mode: CanvasNodeGenerationMode, prompt: string) => Promise<void>) | null>;
 
 type AgentBridgeParams = {
+    enabled?: boolean;
     projectId: string;
     title: string | undefined;
     nodes: CanvasNodeData[];
@@ -42,6 +43,7 @@ export function useAgentBridge(params: AgentBridgeParams) {
     const agentSnapshot = useMemo<CanvasAgentSnapshot>(() => ({ projectId, title: projectTitle, nodes, connections, selectedNodeIds: Array.from(selectedNodeIds), viewport }), [connections, projectTitle, nodes, projectId, selectedNodeIds, viewport]);
     const applyAgentOps = useCallback(
         (ops?: CanvasAgentOp[]) => {
+            if (params.enabled === false) throw new Error("流程编辑器不接入 Agent");
             const safeOps = Array.isArray(ops) ? ops.filter((op) => op?.type) : [];
             const before = { projectId, title: projectTitle, nodes: nodesRef.current, connections: connectionsRef.current, selectedNodeIds: Array.from(selectedNodeIdsRef.current), viewport: viewportRef.current };
             const generationOps = safeOps.filter((op): op is Extract<CanvasAgentOp, { type: "run_generation" }> => op.type === "run_generation" && Boolean(op.nodeId));
@@ -71,7 +73,7 @@ export function useAgentBridge(params: AgentBridgeParams) {
             }
             return { ...next, projectId, title: projectTitle };
         },
-        [projectTitle, projectId],
+        [projectTitle, projectId, params.enabled],
     );
     const undoAgentOps = useCallback(() => {
         if (!agentUndoSnapshot) return null;
@@ -90,9 +92,10 @@ export function useAgentBridge(params: AgentBridgeParams) {
     }, [agentUndoSnapshot, projectTitle, projectId]);
 
     useEffect(() => {
+        if (params.enabled === false) return;
         setAgentCanvasContext({ snapshot: agentSnapshot, applyOps: applyAgentOps, undoOps: undoAgentOps, canUndo: Boolean(agentUndoSnapshot) });
         return () => setAgentCanvasContext(null);
-    }, [agentSnapshot, applyAgentOps, agentUndoSnapshot, setAgentCanvasContext, undoAgentOps]);
+    }, [agentSnapshot, applyAgentOps, agentUndoSnapshot, setAgentCanvasContext, undoAgentOps, params.enabled]);
 
     return { applyAgentOps };
 }

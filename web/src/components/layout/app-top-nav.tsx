@@ -10,8 +10,11 @@ import { cn } from "@/lib/utils";
 import { useEffect, useRef, useState } from "react";
 import { useAgentStore } from "@/stores/use-agent-store";
 
+import { useSiteStore } from "@/stores/use-site-store";
+
 export function AppTopNav() {
     const { t } = useTranslation();
+    const site = useSiteStore((state)=>state.settings);
     const { pathname } = useLocation();
     const [mobileNavOpen, setMobileNavOpen] = useState(false);
     const autoConnectRef = useRef(false);
@@ -36,14 +39,14 @@ export function AppTopNav() {
                     <div className="mx-auto flex h-full max-w-7xl items-stretch justify-between gap-5 px-6">
                         <div className="flex min-w-0 items-center">
                             <Link to="/" className="flex h-full shrink-0 items-center gap-2 text-sm font-semibold leading-none tracking-tight text-stone-950 transition hover:text-stone-600 dark:text-stone-100 dark:hover:text-stone-300">
-                                <span
+                                {site?.logoUrl ? <img src={site.logoUrl} alt="" className="size-5 shrink-0 object-contain"/> : <span
                                     className="size-5 shrink-0 bg-current"
                                     style={{
                                         mask: "url(/logo.svg) center / contain no-repeat",
                                         WebkitMask: "url(/logo.svg) center / contain no-repeat",
                                     }}
-                                />
-                                <span className="text-base font-medium">{t("meta.title")}</span>
+                                />}
+                                <span className="max-w-36 truncate text-base font-medium sm:max-w-60">{site?.siteName || t("meta.title")}</span>
                             </Link>
 
                             <button
@@ -86,6 +89,7 @@ export function AppTopNav() {
                 </header>
             ) : null}
 
+            {site?.announcement && !hideHeader ? <div role="status" className="shrink-0 border-b border-border bg-muted px-6 py-2 text-center text-xs text-muted-foreground">{site.announcement}</div> : null}
             <MobileNavDrawer open={mobileNavOpen} activeToolSlug={activeToolSlug} onClose={() => setMobileNavOpen(false)} />
             <AppConfigModal />
         </>

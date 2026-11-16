@@ -1,5 +1,6 @@
 import { useTranslation } from "react-i18next";
 import type { AccountOverview } from "@/services/api/account";
+import { useSiteStore } from "@/stores/use-site-store";
 
 export function formatStorageSize(bytes: number) {
     if (!Number.isFinite(bytes) || bytes <= 0) return "0K";
@@ -12,11 +13,12 @@ export function formatStorageSize(bytes: number) {
 
 export function AccountOverviewStats({ overview, compact = false, onRecharge }: { overview: AccountOverview; compact?: boolean; onRecharge?: () => void }) {
     const { t } = useTranslation();
+    const cloudStorageEnabled = useSiteStore((state) => state.settings?.userCloudStorageEnabled === true);
     const used = Math.max(0, overview.storage.usedBytes);
     const quota = Math.max(0, overview.storage.quotaBytes);
     const percent = quota ? Math.min(100, (used / quota) * 100) : 0;
     return (
-        <div className={compact ? "space-y-2" : "grid gap-4 sm:grid-cols-2"}>
+        <div className={compact ? "space-y-2" : `grid gap-4 ${cloudStorageEnabled ? "sm:grid-cols-2" : ""}`}>
             <section className="rounded-xl bg-muted p-3">
                 <div className="text-xs text-muted-foreground">{t("account.pointsBalance")}</div>
                 <div className="mt-1 flex items-end justify-between gap-3">
@@ -28,7 +30,7 @@ export function AccountOverviewStats({ overview, compact = false, onRecharge }: 
                     ) : null}
                 </div>
             </section>
-            <section className="rounded-xl bg-muted p-3">
+            {cloudStorageEnabled ? <section className="rounded-xl bg-muted p-3">
                 <div className="text-xs text-muted-foreground">{t("account.storage")}</div>
                 <div className="mt-1 text-xl font-semibold tabular-nums">
                     {formatStorageSize(used)} / {formatStorageSize(quota)}
@@ -36,7 +38,7 @@ export function AccountOverviewStats({ overview, compact = false, onRecharge }: 
                 <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-black/10 dark:bg-white/15">
                     <div className="h-full rounded-full bg-foreground/70 transition-[width]" style={{ width: `${percent}%` }} />
                 </div>
-            </section>
+            </section> : null}
         </div>
     );
 }

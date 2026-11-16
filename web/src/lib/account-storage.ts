@@ -1,6 +1,6 @@
 import localforage from "localforage";
 
-export type AccountSession = { user: { id: string; displayId?: string; username: string; displayName: string; avatarUrl: string; role?: number; points?: number; usedPoints?: number; isAdmin?: boolean } | null };
+export type AccountSession = { user: { id: string; displayId?: string; username: string; displayName: string; avatarUrl: string; role?: number; points?: number; usedPoints?: number; isAdmin?: boolean; authorizationId?: number } | null };
 let account = "guest";
 let initialSession: AccountSession = { user: null };
 export function initializeAccount(session: AccountSession, offlineAccount = "guest") {

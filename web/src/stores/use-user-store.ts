@@ -11,16 +11,21 @@ export type LocalUser = {
     points?: number;
     usedPoints?: number;
     isAdmin?: boolean;
+    authorizationId?: number;
 };
 
 type UserStore = {
     user: LocalUser | null;
+    loginDialogOpen: boolean;
+    setLoginDialogOpen: (open: boolean) => void;
     setUser: (user: LocalUser) => void;
     clearSession: () => void;
 };
 
 export const useUserStore = create<UserStore>()((set) => ({
     user: getInitialSession().user,
-    setUser: (user) => set({ user }),
+    loginDialogOpen: false,
+    setLoginDialogOpen: (loginDialogOpen) => set({ loginDialogOpen }),
+    setUser: (user) => set(state => ({ user: state.user?.id === user.id ? { ...state.user, ...user } : user })),
     clearSession: () => set({ user: null }),
 }));

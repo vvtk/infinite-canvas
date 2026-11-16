@@ -1,7 +1,7 @@
 import axios from "axios";
 
 import i18n from "@/i18n";
-import { buildApiUrl, resolveModelRequestConfig, resolveModelScript, withLocalProxy, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
+import { buildApiUrl, getEffectiveConfig, resolveModelRequestConfig, resolveModelScript, withLocalProxy, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
 import { normalizePluginImages, runModelPlugin } from "./model-plugin";
 import { nanoid } from "nanoid";
 import { dataUrlToFile } from "@/lib/image-utils";
@@ -9,6 +9,8 @@ import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
 import { imageToDataUrl } from "@/services/image-storage";
 import { imageSizePresets, inferMediaScale } from "@/lib/media-size";
 import type { ReferenceImage } from "@/types/image";
+
+import {loggedCall,type UsageObserver} from "./ai-events";
 
 const apiText = (key: string, options?: Record<string, unknown>) => i18n.t(`apiErrors.${key}`, options);
 
@@ -94,8 +96,8 @@ type GeminiPayload = {
     error?: { message?: string };
     promptFeedback?: { blockReason?: string };
 };
-type GeminiStreamState = { buffer: string; text: string; toolCalls: ResponseToolCall[]; error?: string };
-type RequestOptions = { signal?: AbortSignal };
+type GeminiStreamState = { onUsage?:UsageObserver; buffer: string; text: string; toolCalls: ResponseToolCall[]; error?: string };
+type RequestOptions = { signal?: AbortSignal; onUsage?:UsageObserver };
 
 const IMAGE_QUALITY_VALUES = ["low", "medium", "high", "xhigh", "max"];
 const DEFAULT_IMAGE_SHORT_SIDE = 1024;
@@ -470,6 +472,16 @@ function consumeResponseStreamText(state: ResponseStreamState, text: string, onD
 }
 
 async function requestStreamingResponse(config: AiConfig, body: Record<string, unknown>, onDelta?: (text: string) => void, options?: RequestOptions): Promise<ToolResponseResult> {
+    if (config.streamText === false) {
+        const response = await fetch(aiApiUrl(config, "/responses"), { method: "POST", headers: aiHeaders(config, "application/json"), body: JSON.stringify({ ...body, stream: false }), signal: options?.signal });
+        if (!response.ok) throw new Error(await readFetchError(response, apiText("requestFailed")));
+        const payload = await response.json() as ResponseApiPayload;
+        validateResponsePayload(payload);
+        options?.onUsage?.(payload);
+        const result = parseToolResponse(payload);
+        if (result.content) onDelta?.(result.content);
+        return result;
+    }
     const response = await fetch(aiApiUrl(config, "/responses"), {
         method: "POST",
         headers: { ...aiHeaders(config, "application/json"), Accept: "text/event-stream" },
@@ -480,6 +492,7 @@ async function requestStreamingResponse(config: AiConfig, body: Record<string, u
     if (!response.body) {
         const payload = (await response.json()) as ResponseApiPayload;
         validateResponsePayload(payload);
+        options?.onUsage?.(payload);
         return parseToolResponse(payload);
     }
 
@@ -495,6 +508,7 @@ async function requestStreamingResponse(config: AiConfig, body: Record<string, u
     consumeResponseStreamText(state, decoder.decode(), onDelta, true);
     if (state.error) throw new Error(state.error);
     if (!state.payload) return { content: state.text, toolCalls: [] };
+    options?.onUsage?.(state.payload);
     validateResponsePayload(state.payload);
     const result = parseToolResponse(state.payload);
     return { ...result, content: state.text || result.content };
@@ -577,6 +591,15 @@ function toGeminiToolOptions(tools: ResponseFunctionTool[], toolChoice: ToolChoi
 }
 
 async function requestGeminiStreamingResponse(config: AiConfig, body: Record<string, unknown>, onDelta?: (text: string) => void, options?: RequestOptions): Promise<ToolResponseResult> {
+    if (config.streamText === false) {
+        const response = await fetch(geminiApiUrl(config, "generateContent"), { method: "POST", headers: geminiHeaders(config), body: JSON.stringify(body), signal: options?.signal });
+        if (!response.ok) throw new Error(await readFetchError(response, apiText("requestFailed")));
+        const payload = await response.json() as GeminiPayload;
+        options?.onUsage?.(payload);
+        const result = parseGeminiToolResponse(payload);
+        if (result.content) onDelta?.(result.content);
+        return result;
+    }
     const response = await fetch(`${geminiApiUrl(config, "streamGenerateContent")}?alt=sse`, {
         method: "POST",
         headers: geminiHeaders(config),
@@ -586,12 +609,13 @@ async function requestGeminiStreamingResponse(config: AiConfig, body: Record<str
     if (!response.ok) throw new Error(await readFetchError(response, apiText("requestFailed")));
     if (!response.body) {
         const payload = (await response.json()) as GeminiPayload;
+        options?.onUsage?.(payload);
         return parseGeminiToolResponse(payload);
     }
 
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
-    const state: GeminiStreamState = { buffer: "", text: "", toolCalls: [] };
+    const state: GeminiStreamState = { buffer: "", text: "", toolCalls: [], onUsage:options?.onUsage };
     for (;;) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -626,7 +650,9 @@ function consumeGeminiStreamBlock(block: string, state: GeminiStreamState, onDel
         .join("\n")
         .trim();
     if (!data || data === "[DONE]") return;
-    const result = parseGeminiToolResponse(JSON.parse(data) as GeminiPayload);
+    const payload=JSON.parse(data) as GeminiPayload;
+    state.onUsage?.(payload);
+    const result = parseGeminiToolResponse(payload);
     if (result.content) {
         state.text += result.content;
         onDelta?.(state.text);
@@ -672,6 +698,7 @@ async function requestGeminiImagesOnce(config: AiConfig, prompt: string, referen
         },
         { headers: geminiHeaders(config), signal: options?.signal, timeout: IMAGE_REQUEST_TIMEOUT_MS },
     );
+    options?.onUsage?.(response.data,true);
     return parseGeminiImagePayload(response.data);
 }
 
@@ -691,10 +718,26 @@ function parseGeminiImagePayload(payload: GeminiPayload) {
     return images;
 }
 
-export async function requestGeneration(config: AiConfig, prompt: string, options?: RequestOptions) {
+export async function requestGeneration(config:AiConfig,prompt:string,options?:RequestOptions){
+    config = getEffectiveConfig(config, "image", config.model || config.imageModel);
+    return loggedCall(config,"image",[config.systemPrompt,prompt].filter(Boolean).join("\n\n"),0,options?.signal,onUsage=>requestGenerationInternal(config,prompt,{...options,onUsage}),result=>({count:result.length}));
+}
+export async function requestEdit(config:AiConfig,prompt:string,references:ReferenceImage[],options?:RequestOptions){
+    config = getEffectiveConfig(config, "image", config.model || config.imageModel);
+    return loggedCall(config,"edit",[config.systemPrompt,prompt].filter(Boolean).join("\n\n"),references.length,options?.signal,onUsage=>requestEditInternal(config,prompt,references,{...options,onUsage}),result=>({count:result.length}));
+}
+export async function requestImageQuestion(config:AiConfig,messages:AiTextMessage[],onDelta:(text:string)=>void,options?:RequestOptions){
+    config = getEffectiveConfig(config, "text", config.model || config.textModel);
+    const input=[config.systemPrompt,...messages.map(message=>`${message.role}: ${typeof message.content==="string"?message.content:message.content.filter(part=>part.type==="text").map(part=>part.text).join("\n")}`)].filter(Boolean).join("\n\n");
+    const count=messages.reduce((total,message)=>total+(Array.isArray(message.content)?message.content.filter(part=>part.type==="image_url").length:0),0);
+    return loggedCall(config,"text",input,count,options?.signal,onUsage=>requestImageQuestionInternal(config,messages,onDelta,{...options,onUsage}),text=>({text}));
+}
+
+async function requestGenerationInternal(config: AiConfig, prompt: string, options?: RequestOptions) {
     const requestConfig = resolveModelRequestConfig(config, config.model || config.imageModel);
-    const n = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
     const script = resolveModelScript(config, config.model || config.imageModel);
+    config = requestConfig;
+    const n = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
     if (script) {
         const quality = normalizeQuality(config.quality);
         const requestSize = resolveRequestSize(config.size);
@@ -708,6 +751,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
                 images: [],
                 params: { size: requestSize, resolution: inferMediaScale(config.size), quality, count: n, ...(background ? { background } : {}) },
                 signal: options?.signal,
+                onUsage: options?.onUsage,
             });
             return normalizePluginImages(result).map((dataUrl) => ({ id: nanoid(), dataUrl }));
         } catch (error) {
@@ -735,7 +779,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
                 ...(requestSize ? { size: requestSize } : {}),
                 ...(background ? { background } : {}),
                 // gpt-image models reject response_format; they always return b64.
-                ...(/gpt-image/.test(requestConfig.model) ? {} : { response_format: "b64_json" }),
+                ...(/gpt-image/i.test(requestConfig.model) || !requestConfig.returnBase64 ? {} : { response_format: "b64_json" }),
                 output_format: IMAGE_OUTPUT_FORMAT,
             },
             {
@@ -744,6 +788,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
                 timeout: IMAGE_REQUEST_TIMEOUT_MS,
             },
         );
+        options?.onUsage?.(response.data);
         const images = await parseImagePayload(response.data);
         return images;
     } catch (error) {
@@ -751,11 +796,12 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
     }
 }
 
-export async function requestEdit(config: AiConfig, prompt: string, references: ReferenceImage[], options?: RequestOptions) {
+async function requestEditInternal(config: AiConfig, prompt: string, references: ReferenceImage[], options?: RequestOptions) {
     const requestConfig = resolveModelRequestConfig(config, config.model || config.imageModel);
     const n = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
     const requestPrompt = buildImageReferencePromptText(prompt, references);
     const script = resolveModelScript(config, config.model || config.imageModel);
+    config = requestConfig;
     if (script) {
         const quality = normalizeQuality(config.quality);
         const requestSize = resolveRequestSize(config.size);
@@ -770,6 +816,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
                 images: refs,
                 params: { size: requestSize, resolution: inferMediaScale(config.size), quality, count: n, ...(background ? { background } : {}) },
                 signal: options?.signal,
+                onUsage: options?.onUsage,
             });
             return normalizePluginImages(result).map((dataUrl) => ({ id: nanoid(), dataUrl }));
         } catch (error) {
@@ -792,7 +839,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     formData.set("prompt", withSystemPrompt(requestConfig, requestPrompt));
     formData.set("n", String(n));
     // gpt-image models reject response_format; they always return b64.
-    if (!/gpt-image/.test(requestConfig.model)) {
+    if (!/gpt-image/i.test(requestConfig.model) && requestConfig.returnBase64) {
         formData.set("response_format", "b64_json");
     }
     formData.set("output_format", IMAGE_OUTPUT_FORMAT);
@@ -811,6 +858,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
 
     try {
         const response = await axios.post<ImageApiResponse>(aiApiUrl(requestConfig, "/images/edits"), formData, { headers: aiHeaders(requestConfig), signal: options?.signal, timeout: IMAGE_REQUEST_TIMEOUT_MS });
+        options?.onUsage?.(response.data);
         const images = await parseImagePayload(response.data);
         return images;
     } catch (error) {
@@ -818,7 +866,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     }
 }
 
-export async function requestImageQuestion(config: AiConfig, messages: AiTextMessage[], onDelta: (text: string) => void, options?: RequestOptions) {
+async function requestImageQuestionInternal(config: AiConfig, messages: AiTextMessage[], onDelta: (text: string) => void, options?: RequestOptions) {
     const requestConfig = resolveModelRequestConfig(config, config.model || config.textModel);
     const script = resolveModelScript(config, config.model || config.textModel);
     if (script) {
@@ -829,6 +877,7 @@ export async function requestImageQuestion(config: AiConfig, messages: AiTextMes
                 config: requestConfig,
                 messages: withSystemMessage(requestConfig, messages),
                 signal: options?.signal,
+                onUsage: options?.onUsage,
                 onDelta,
             });
             const text = String(answer ?? "").trim() || apiText("noContent");

@@ -5,7 +5,15 @@ description: Planned follow-up work
 
 # TODO
 
+AI tutorial workflows are implemented; full-screen editing, the shared sidebar and workflow-library new/switch actions, save-and-return, media, insertion and authorization acceptance are tracked in [Pending Tests](/docs/progress/pending-test). Sidebar layout and canceled switching still need manual verification.
+
+Session-expiry logout, shared LLMRoam credentials and private-channel visibility are implemented; acceptance remains in [Pending Tests](/docs/progress/pending-test).
+
+System-channel management and local preferences are implemented. Permission, request-parameter, account-isolation and video-recovery acceptance is tracked in [Pending Tests](/docs/progress/pending-test).
+
 - Replace the Claude Code CLI adapter with a Claude Agent SDK adapter and improve the tool queue, following the [Local Agent Integration Plan](/docs/progress/local-agent-integration-plan).
 - Add Skill installation from web search, Skill resource-file management, and controlled local-memory persistence.
 
-- 云同步后续：在引用安全和备份策略确认后增加未引用媒体回收及存储用量管理；当前删除记录不自动回收原始媒体。
+- Public-source networking: the dedicated direct Agent receives `ECONNRESET` from GitHub on the current network. Add controlled proxy access while preserving per-hop DNS and public-address checks, then accept real synchronization of all seven default sources.
+- 授权服务部署：线上 LLMRoam 已升级 `v8`，但该发布标签未包含仍在本地工作区的配套凭据复用修改；需将其纳入实际发布源码并构建部署，使令牌响应包含 `sub`、`authorization_id`，再完成画布真实账号登录与双浏览器同步验收；画布诊断与连接配置变更见 Pending Tests。
+- Cloud storage follow-up: add reference-safe cleanup for unreferenced private and public media, failed restore copies and unregistered objects. Pool management, migration-source cleanup, manual associated-data backups/restores and the user cloud-storage switch are implemented; acceptance is tracked in Pending Tests. Deleting records does not reclaim original media.

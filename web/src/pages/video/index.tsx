@@ -15,10 +15,11 @@ import { clampVideoSeconds } from "@/lib/media-size";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
 import { deleteStoredMedia, resolveMediaUrl } from "@/services/file-storage";
 import { resolveImageUrl, ensureImagePreview, getImagePreviewRevision, previewUrlFor, subscribeImagePreviews, uploadImage } from "@/services/image-storage";
-import { createVideoGenerationTask, pollVideoGenerationTask, storeGeneratedVideo, type VideoGenerationTask } from "@/services/api/video";
+import { createVideoGenerationTask, pollVideoGenerationTask, finishVideoCall, storeGeneratedVideo, type VideoGenerationTask } from "@/services/api/video";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
-import { boolConfig, modelOptionLabel, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
+import { boolConfig, getEffectiveConfig, modelOptionLabel, useConfigStore, type AiConfig } from "@/stores/use-config-store";
+import { useWorkbenchConfig } from "@/hooks/use-workbench-config";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { ReferenceImage } from "@/types/image";
 import i18n from "@/i18n";
@@ -74,9 +75,8 @@ export default function VideoPage() {
     const fileInputRef = useRef<HTMLInputElement>(null);
     const dragDepthRef = useRef(0);
     const activeLogIdsRef = useRef<Set<string>>(new Set());
-    const config = useConfigStore((state) => state.config);
-    const effectiveConfig = useEffectiveConfig();
-    const updateConfig = useConfigStore((state) => state.updateConfig);
+    const { config: effectiveConfig, updateConfig } = useWorkbenchConfig("video");
+    const config = effectiveConfig;
     const isAiConfigReady = useConfigStore((state) => state.isAiConfigReady);
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
     const addAsset = useAssetStore((state) => state.addAsset);
@@ -120,6 +120,10 @@ export default function VideoPage() {
     useEffect(() => {
         void refreshLogs();
     }, []);
+
+    useEffect(() => {
+        resumePendingLogs(logs);
+    }, [logs, effectiveConfig]);
 
     const addReferences = async (files?: FileList | null) => {
         const selectedFiles = Array.from(files || []);
@@ -315,11 +319,13 @@ export default function VideoPage() {
 
     const pollGenerationLog = async (log: GenerationLog, configOverride?: AiConfig, agentTaskId?: string) => {
         if (!log.task || activeLogIdsRef.current.has(log.id)) return;
+        const taskModel = log.task.model || log.model;
+        const taskConfig = buildVideoConfig({ ...getEffectiveConfig(effectiveConfig, "video", taskModel), ...log.config }, taskModel);
+        if (!isAiConfigReady(configOverride || taskConfig, taskModel)) return;
         activeLogIdsRef.current.add(log.id);
         setRunning(true);
         setStartedAt((value) => value || performance.now());
         setResults((value) => (value.length ? value : [{ id: log.id, status: "pending" }]));
-        const taskConfig = buildVideoConfig({ ...effectiveConfig, ...log.config }, log.task.model || log.model);
         try {
             for (let attempt = 0; attempt < 120; attempt += 1) {
                 const state = await pollVideoGenerationTask(configOverride || taskConfig, log.task);
@@ -346,6 +352,7 @@ export default function VideoPage() {
                 await delay(2500);
             }
         } catch (error) {
+            finishVideoCall(log.task,configOverride || taskConfig,error);
             const errorMessage = error instanceof Error ? error.message : t("workbench.generationFailed");
             setResults([{ id: log.id, status: "failed", error: errorMessage }]);
             if (agentTaskId) updateAgentTask(agentTaskId, { status: "failed", successCount: 0, failCount: 1, error: errorMessage });
@@ -777,6 +784,7 @@ function buildLog({ prompt, model, config, references, durationMs, status, task,
 }
 
 function buildVideoConfig(config: AiConfig, model: string): AiConfig {
+    config = getEffectiveConfig(config, "video", model);
     return {
         ...config,
         model,

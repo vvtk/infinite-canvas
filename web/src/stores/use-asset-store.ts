@@ -3,8 +3,8 @@ import { persist, type PersistStorage, type StorageValue } from "zustand/middlew
 
 import { nanoid } from "nanoid";
 import { localForageStorage } from "@/lib/localforage-storage";
-import { cleanupUnusedImages, ensureImagePreview, previewUrlFor, resolveImageUrl, uploadImage } from "@/services/image-storage";
-import { cleanupUnusedMedia, resolveMediaUrl } from "@/services/file-storage";
+import { cleanupUnusedImages, collectImageStorageKeys, ensureImagePreview, previewUrlFor, resolveImageUrl, uploadImage } from "@/services/image-storage";
+import { cleanupUnusedMedia, collectMediaStorageKeys, resolveMediaUrl } from "@/services/file-storage";
 
 export type AssetKind = "text" | "image" | "video";
 export type TextAsset = AssetBase<"text"> & { data: { content: string } };
@@ -51,13 +51,15 @@ const assetStorage: PersistStorage<AssetStore> = {
         const parsed = JSON.parse(value) as StorageValue<AssetStore>;
         parsed.state.assets = await Promise.all(
             parsed.state.assets.map(async (asset) => {
+                const cover = asset.metadata?.cover as {storageKey?:string}|undefined;
+                if (cover?.storageKey) asset = {...asset,coverUrl:await resolveImageUrl(cover.storageKey,asset.coverUrl)};
                 if (asset.kind === "video" && asset.data.storageKey) return { ...asset, data: { ...asset.data, url: await resolveMediaUrl(asset.data.storageKey, asset.data.url) } };
                 if (asset.kind !== "image") return asset;
                 if (asset.data.storageKey) {
                     void ensureImagePreview(asset.data.storageKey);
                     return {
                         ...asset,
-                        coverUrl: asset.coverUrl.startsWith("blob:") ? await resolveImageUrl(asset.data.storageKey, asset.coverUrl) : asset.coverUrl,
+                        coverUrl: !cover?.storageKey && asset.coverUrl.startsWith("blob:") ? await resolveImageUrl(asset.data.storageKey, asset.coverUrl) : asset.coverUrl,
                         data: { ...asset.data, dataUrl: await resolveImageUrl(asset.data.storageKey, asset.data.dataUrl) },
                     };
                 }
@@ -97,8 +99,11 @@ export const useAssetStore = create<AssetStore>()(
             cleanupImages: (extra) => {
                 window.setTimeout(async () => {
                     const { useCanvasStore } = await import("@/stores/canvas/use-canvas-store");
-                    await cleanupUnusedImages({ assets: get().assets, projects: useCanvasStore.getState().projects, extra });
-                    await cleanupUnusedMedia({ assets: get().assets, projects: useCanvasStore.getState().projects, extra });
+                    const { workflowMediaRetention, isWorkflowMediaRetained } = await import("@/services/workflow-drafts");
+                    const workflows = await workflowMediaRetention();
+                    const keepKey = (key: string) => isWorkflowMediaRetained(key) || (key.startsWith("image:") ? collectImageStorageKeys : collectMediaStorageKeys)({ assets: get().assets, projects: useCanvasStore.getState().projects }).has(key);
+                    await cleanupUnusedImages({ assets: get().assets, projects: useCanvasStore.getState().projects, workflows, extra }, keepKey);
+                    await cleanupUnusedMedia({ assets: get().assets, projects: useCanvasStore.getState().projects, workflows, extra }, keepKey);
                 }, 0);
             },
         }),

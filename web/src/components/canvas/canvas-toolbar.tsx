@@ -7,10 +7,12 @@ import { canvasThemes, type CanvasBackgroundMode, type CanvasColorTheme, type Ca
 import { getNodePluginId, listNodeDefinitions, useNodeRegistryVersion } from "@/lib/canvas/node-registry";
 import { getNodeSpec } from "@/constant/canvas";
 import { useThemeStore } from "@/stores/use-theme-store";
+import { CANVAS_SIDE_PANEL_NAV_WIDTH, useCanvasSidePanelStore } from "@/stores/use-canvas-side-panel-store";
 import { AnimatedThemeToggler } from "@/components/ui/animated-theme-toggler";
 import { useTranslation } from "react-i18next";
 
 export function CanvasToolbar({
+    builtinsOnly = false,
     selectedCount,
     canvasTool,
     canUndo,
@@ -34,6 +36,7 @@ export function CanvasToolbar({
     onShowImageInfoChange,
     onFocusSelected,
 }: {
+    builtinsOnly?: boolean;
     selectedCount: number;
     canvasTool: "select" | "pan";
     canUndo: boolean;
@@ -63,6 +66,7 @@ export function CanvasToolbar({
     const colorTheme = useThemeStore((state) => state.theme);
     const setTheme = useThemeStore((state) => state.setTheme);
     const theme = canvasThemes[colorTheme];
+    const sideNavVisible = useCanvasSidePanelStore(state => state.panelOpen && state.tab === null);
     const [hovered, setHovered] = useState<string | null>(null);
     const [tipX, setTipX] = useState(0);
     const [appearanceOpen, setAppearanceOpen] = useState(false);
@@ -71,8 +75,8 @@ export function CanvasToolbar({
     const [extPanelX, setExtPanelX] = useState(0);
     // Keep extension plugin nodes synchronized with registry changes.
     useNodeRegistryVersion();
-    const extensionDefs = listNodeDefinitions().filter((def) => def.showInCreateMenu !== false && getNodePluginId(def.type) !== "builtin");
-    const dockStyle = { background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.toolbar.item, boxShadow: colorTheme === "dark" ? "0 18px 45px rgba(0,0,0,.32)" : "0 16px 40px rgba(28,25,23,.12)" };
+    const extensionDefs = builtinsOnly ? [] : listNodeDefinitions().filter((def) => def.showInCreateMenu !== false && getNodePluginId(def.type) !== "builtin");
+    const dockStyle = { background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.toolbar.item, boxShadow: theme.toolbar.shadow };
     const hoverStyle = { background: theme.toolbar.itemHover, color: theme.toolbar.activeText };
     const activeStyle = { background: theme.toolbar.activeBg, color: theme.toolbar.activeText };
     const tip = hovered ? toolLabel(hovered, t) : "";
@@ -91,7 +95,7 @@ export function CanvasToolbar({
     }, [extensionsOpen, appearanceOpen]);
 
     return (
-        <div ref={rootRef} className="pointer-events-none absolute bottom-5 z-50 flex justify-center" style={{ left: 300, right: 16 }} data-canvas-bottom-toolbar>
+        <div ref={rootRef} className="pointer-events-none absolute bottom-5 z-50 flex justify-center" style={{ left: sideNavVisible ? 20 + CANVAS_SIDE_PANEL_NAV_WIDTH + 16 : 16, right: 16 }} data-canvas-bottom-toolbar>
             {tip ? <DockTip label={tip} x={tipX} theme={theme} /> : null}
             <div ref={wrapRef} className="thin-scrollbar pointer-events-auto flex h-14 max-w-full items-center gap-1 overflow-x-auto rounded-xl border px-2 shadow-lg backdrop-blur [&>*]:shrink-0" style={dockStyle}>
                 <ToolbarButton id={`tool-${canvasTool}`} label={t(`canvas.toolbar.${canvasTool}`)} active hovered={hovered} activeStyle={activeStyle} hoverStyle={hoverStyle} wrapRef={wrapRef} onTipX={setTipX} onHover={setHovered} onClick={() => onCanvasToolChange(canvasTool === "select" ? "pan" : "select")}>

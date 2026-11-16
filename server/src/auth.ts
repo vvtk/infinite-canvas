@@ -4,15 +4,17 @@ import type { Config } from "./config.js";
 import { challenge, decrypt, digest, encrypt, localReturnPath, randomToken } from "./crypto.js";
 import { transaction } from "./db.js";
 import { z } from "zod";
+import { fail, storageQuota, storageUsage } from "./management.js";
+import { isAdminRole, isSuperAdminRole } from "../../shared/roles.js";
 
-const tokenSchema = z.object({ access_token: z.string().min(1), refresh_token: z.string().min(1), expires_in: z.number().positive() });
+const tokenSchema = z.object({ access_token: z.string().min(1), refresh_token: z.string().min(1), expires_in: z.number().nonnegative(), sub: z.string().min(1), authorization_id: z.number().int().positive() });
 const profileSchema = z.object({ sub: z.string().min(1), username: z.string(), display_name: z.string(), avatar_url: z.string().optional(), role: z.number().int().nonnegative().default(1), quota: z.number().int().nonnegative().default(0), used_quota: z.number().int().nonnegative().default(0) });
 const accountProfileSchema = z.object({ success: z.literal(true), data: profileSchema.omit({ sub: true }).extend({ id: z.number().int().positive() }) });
 const walletSettingsSchema = z.object({ success: z.literal(true), data: z.object({ quota_display_type: z.enum(["USD", "CNY", "CUSTOM", "TOKENS"]), quota_per_unit: z.number().positive(), usd_exchange_rate: z.number().positive(), custom_currency_exchange_rate: z.number().positive() }) });
 const oauthScope = "api_key:read api_key:write api_key:reveal model_inference:use profile:read wallet:read";
 const clientHeaders = { "User-Agent": "InfiniteCanvas" };
-export type Credentials = { accessToken: string; refreshToken: string; expiresAt: number };
-export type Session = { userId: string; hash: string; credentials: Credentials };
+export type Credentials = { accessToken: string; refreshToken: string; expiresAt: number; authorizationId: number };
+export type Session = { userId: string; hash: string };
 
 export function authService(app: FastifyInstance, pool: Pool, config: Config) {
     const cookie = { httpOnly: true, secure: new URL(config.PUBLIC_URL).protocol === "https:", sameSite: "lax" as const, path: "/" };
@@ -20,11 +22,26 @@ export function authService(app: FastifyInstance, pool: Pool, config: Config) {
     const cookieName = cookie.secure ? "__Host-canvas-session" : "canvas-session";
     const flowCookie = cookie.secure ? "__Host-canvas-flow" : "canvas-flow";
     const accountUsers = new Map<string, { expiresAt: number; value: ReturnType<typeof loadAccountUser> }>();
+    const callbackStages = new WeakMap<FastifyRequest, string>();
+    async function endSession(request: FastifyRequest, reply: FastifyReply) {
+        const raw = request.cookies[cookieName];
+        if (raw) {
+            const hash = digest(raw);
+            accountUsers.delete(hash);
+            await pool.query("DELETE FROM canvas_sessions WHERE id_hash=$1", [hash]);
+        }
+        reply.clearCookie(cookieName, cookie);
+    }
+    app.addHook("onError", async (request, reply, error) => {
+        if (error.statusCode === 401) await endSession(request, reply);
+    });
     async function loadAccountUser(current: Session) {
         const { data } = accountProfileSchema.parse(await (await authorized(current, "/api/user/self")).json());
         const profile = { ...data, sub: String(data.id) };
         const balance = await walletBalance(profile);
-        return { id: current.userId, displayId: profile.sub, username: profile.username, displayName: profile.display_name, avatarUrl: profile.avatar_url || "", ...balance, role: profile.role, isAdmin: profile.role >= 10 };
+        const user = { id: current.userId, displayId: profile.sub, username: profile.username, displayName: profile.display_name, avatarUrl: profile.avatar_url || "", ...balance, role: profile.role, isAdmin: isAdminRole(profile.role) };
+        await pool.query("UPDATE canvas_users SET profile=$2,profile_updated_at=now() WHERE id=$1", [current.userId,user]);
+        return user;
     }
     async function cachedAccountUser(current: Session) {
         const now = Date.now();
@@ -56,17 +73,27 @@ export function authService(app: FastifyInstance, pool: Pool, config: Config) {
         const response = await fetch(new URL("/api/oauth-provider/token", config.LLMROAM_URL), {
             method: "POST", headers: { ...clientHeaders, Authorization: `Basic ${Buffer.from(`${config.OAUTH_CLIENT_ID}:${config.OAUTH_CLIENT_SECRET}`).toString("base64")}`, "Content-Type": "application/x-www-form-urlencoded" }, body: params,
         });
-        if (!response.ok) throw Object.assign(new Error(response.status === 429 ? "LLMRoam 请求过于频繁，请稍后重试" : "授权凭据已失效，请重新登录"), { statusCode: response.status === 429 ? 429 : 401 });
-        const result = tokenSchema.parse(await response.json());
-        return { accessToken: result.access_token, refreshToken: result.refresh_token, expiresAt: Date.now() + result.expires_in * 1000 };
+        const body = await response.json().catch(() => null);
+        if (!response.ok) {
+            console.warn("LLMRoam OAuth token request rejected", { grantType: params.get("grant_type"), status: response.status, error: ["invalid_grant", "invalid_client", "invalid_request", "invalid_scope", "temporarily_unavailable", "server_error"].includes(body?.error) ? body.error : "unknown" });
+            const expired = response.status === 400 && body?.error === "invalid_grant";
+            fail(response.status === 429 ? 429 : expired ? 401 : 502, response.status === 429 ? "LLMRoam 请求过于频繁，请稍后重试" : expired ? "授权凭据已失效，请重新登录" : "LLMRoam 授权服务暂时不可用");
+        }
+        const result = tokenSchema.safeParse(body);
+        if (!result.success) {
+            console.warn("LLMRoam OAuth token response invalid", { fields: result.error.issues.map(issue => ({ field: issue.path.join("."), code: issue.code })) });
+            throw Object.assign(new Error("LLMRoam 授权响应不符合要求，请更新配套授权服务"), { statusCode: 502, code: "OAUTH_PROVIDER_INCOMPATIBLE" });
+        }
+        const { access_token, refresh_token, expires_in, sub, authorization_id } = result.data;
+        return { sub, accessToken: access_token, refreshToken: refresh_token, expiresAt: Date.now() + expires_in * 1000, authorizationId: authorization_id };
     }
     async function session(request: FastifyRequest): Promise<Session | null> {
         const raw = request.cookies[cookieName];
         if (!raw) return null;
         const hash = digest(raw);
-        const result = await pool.query("SELECT user_id, credentials FROM canvas_sessions WHERE id_hash=$1 AND expires_at>now()", [hash]);
+        const result = await pool.query("SELECT s.user_id FROM canvas_sessions s JOIN canvas_users u ON u.id=s.user_id WHERE s.id_hash=$1 AND s.expires_at>now() AND u.enabled AND u.oauth_credentials IS NOT NULL", [hash]);
         if (!result.rowCount) return null;
-        return { userId: result.rows[0].user_id, hash, credentials: decrypt<Credentials>(result.rows[0].credentials, config.ENCRYPTION_KEY) };
+        return { userId: result.rows[0].user_id, hash };
     }
     async function requireSession(request: FastifyRequest) {
         const result = await session(request);
@@ -74,19 +101,24 @@ export function authService(app: FastifyInstance, pool: Pool, config: Config) {
         return result;
     }
     async function authorized(session: Session, path: string, method = "GET") {
-        // Serialize refresh rotation across concurrent requests and server instances.
-        const credentials = await transaction(pool, async (db) => {
-            const result = await db.query("SELECT credentials FROM canvas_sessions WHERE id_hash=$1 AND expires_at>now() FOR UPDATE", [session.hash]);
+        // Keep refresh and its provider request under the account lock across browsers and instances.
+        let upstreamError: unknown;
+        const response = await transaction(pool, async (db) => {
+            const result = await db.query("SELECT u.oauth_credentials FROM canvas_users u JOIN canvas_sessions s ON s.user_id=u.id WHERE u.id=$1 AND s.id_hash=$2 AND s.expires_at>now() AND u.enabled FOR UPDATE OF u", [session.userId, session.hash]);
             if (!result.rowCount) throw Object.assign(new Error("请重新登录"), { statusCode: 401 });
-            let value = decrypt<Credentials>(result.rows[0].credentials, config.ENCRYPTION_KEY);
+            let value = decrypt<Credentials>(result.rows[0].oauth_credentials, config.ENCRYPTION_KEY);
             if (value.expiresAt <= Date.now()) {
-                value = await tokenRequest(new URLSearchParams({ grant_type: "refresh_token", refresh_token: value.refreshToken }));
-                await db.query("UPDATE canvas_sessions SET credentials=$1 WHERE id_hash=$2", [encrypt(value, config.ENCRYPTION_KEY), session.hash]);
+                const refreshed = await tokenRequest(new URLSearchParams({ grant_type: "refresh_token", refresh_token: value.refreshToken }));
+                if (digest(`${new URL(config.ACCOUNT_ID_ORIGIN).origin}\n${refreshed.sub}`) !== session.userId || refreshed.authorizationId !== value.authorizationId) fail(502, "授权账号不一致");
+                value = refreshed;
+                await db.query("UPDATE canvas_users SET oauth_credentials=$1 WHERE id=$2", [encrypt(value, config.ENCRYPTION_KEY), session.userId]);
             }
-            return value;
+            // A downstream failure must not roll back a successfully rotated refresh token.
+            try { return await fetch(new URL(path, config.LLMROAM_URL), { method, headers: { ...clientHeaders, Authorization: `Bearer ${value.accessToken}` } }); }
+            catch (error) { upstreamError = error; return null; }
         });
-        const response = await fetch(new URL(path, config.LLMROAM_URL), { method, headers: { ...clientHeaders, Authorization: `Bearer ${credentials.accessToken}` } });
-        if (!response.ok) throw Object.assign(new Error(response.status === 429 ? "LLMRoam 请求过于频繁，请稍后重试" : "LLMRoam 授权请求失败，请重新登录"), { statusCode: response.status === 429 ? 429 : response.status === 401 ? 401 : 502 });
+        if (!response) throw upstreamError;
+        if (!response.ok) fail(response.status === 429 ? 429 : response.status === 401 ? 401 : response.status === 403 ? 403 : 502, response.status === 429 ? "LLMRoam 请求过于频繁，请稍后重试" : response.status === 401 ? "授权凭据已失效，请重新登录" : "LLMRoam 授权请求失败");
         return response;
     }
     app.get("/api/auth/login", async (request, reply) => {
@@ -101,47 +133,81 @@ export function authService(app: FastifyInstance, pool: Pool, config: Config) {
         reply.header("Cache-Control", "no-store");
         return reply.redirect(url.href);
     });
-    app.get("/api/auth/callback", async (request, reply) => {
+    app.get("/api/auth/callback", { errorHandler(error, request, reply) {
+        const status = error instanceof z.ZodError ? 400 : (error as { statusCode?: number }).statusCode || 500;
+        const code = (error as { code?: string }).code;
+        const reason = code === "OAUTH_PROVIDER_INCOMPATIBLE" ? "provider_incompatible" : status === 401 ? "invalid_grant" : status === 429 ? "rate_limited" : status >= 500 ? "service_unavailable" : "callback_failed";
+        console.warn("Canvas OAuth callback failed", { stage: callbackStages.get(request) || "callback", status, reason, code: typeof code === "string" && /^[A-Z0-9_]+$/.test(code) ? code : undefined });
+        reply.clearCookie(flowCookie, cookie).header("Cache-Control", "no-store").header("Referrer-Policy", "no-referrer");
+        return reply.redirect(`/?auth_error=${reason}`);
+    } }, async (request, reply) => {
+        callbackStages.set(request, "flow_validation");
         const query = z.object({ state: z.string().min(1), code: z.string().optional(), error: z.string().optional() }).parse(request.query);
         reply.clearCookie(flowCookie, cookie).header("Cache-Control", "no-store").header("Referrer-Policy", "no-referrer");
-        if (query.state !== request.cookies[flowCookie]) return reply.code(400).send({ message: "登录状态校验失败，请重新登录" });
+        if (query.state !== request.cookies[flowCookie]) fail(400, "登录状态校验失败，请重新登录");
         const flow = await pool.query("DELETE FROM canvas_oauth_flows WHERE state_hash=$1 AND expires_at>now() RETURNING *", [digest(query.state)]);
-        if (!flow.rowCount) return reply.code(400).send({ message: "授权流程已过期或已使用" });
+        if (!flow.rowCount) fail(400, "授权流程已过期或已使用");
         if (query.error || !query.code) {
             const target = new URL(flow.rows[0].return_path, config.PUBLIC_URL);
             target.searchParams.set("auth_error", query.error || "access_denied");
             return reply.redirect(`${target.pathname}${target.search}`);
         }
-        const credentials = await tokenRequest(new URLSearchParams({ grant_type: "authorization_code", code: query.code, redirect_uri: redirectUri, code_verifier: decrypt<string>(flow.rows[0].verifier, config.ENCRYPTION_KEY) }));
-        const response = await fetch(new URL("/api/oauth-provider/userinfo", config.LLMROAM_URL), { headers: { ...clientHeaders, Authorization: `Bearer ${credentials.accessToken}` } });
-        if (!response.ok) throw Object.assign(new Error("无法获取授权用户信息"), { statusCode: 502 });
-        const profile = profileSchema.parse(await response.json());
-        const balance = await walletBalance(profile);
-        const userId = digest(`${new URL(config.LLMROAM_URL).origin}\n${profile.sub}`);
+        callbackStages.set(request, "token_exchange");
+        const exchanged = await tokenRequest(new URLSearchParams({ grant_type: "authorization_code", code: query.code, redirect_uri: redirectUri, code_verifier: decrypt<string>(flow.rows[0].verifier, config.ENCRYPTION_KEY), reuse_authorization: "true" }));
+        const userId = digest(`${new URL(config.ACCOUNT_ID_ORIGIN).origin}\n${exchanged.sub}`);
         const raw = randomToken();
+        let callbackFailure: unknown;
+        callbackStages.set(request, "account_storage");
         await transaction(pool, async (db) => {
-            await db.query("INSERT INTO canvas_users(id,profile) VALUES($1,$2) ON CONFLICT(id) DO UPDATE SET profile=EXCLUDED.profile", [userId, { id: userId, displayId: profile.sub, username: profile.username, displayName: profile.display_name, avatarUrl: profile.avatar_url || "", role: profile.role, ...balance }]);
+            await db.query("INSERT INTO canvas_users(id,profile) VALUES($1,'{}') ON CONFLICT DO NOTHING", [userId]);
+            const saved = await db.query("SELECT enabled,oauth_credentials FROM canvas_users WHERE id=$1 FOR UPDATE", [userId]);
+            if (!saved.rows[0].enabled) fail(403,"此本站账号已被禁用");
+            const stored = saved.rows[0].oauth_credentials ? decrypt<Credentials>(saved.rows[0].oauth_credentials, config.ENCRYPTION_KEY) : null;
+            // Another browser may have rotated the shared credential after this code exchange.
+            let credentials: Credentials = stored?.authorizationId === exchanged.authorizationId ? stored : exchanged;
+            if (credentials.expiresAt <= Date.now()) {
+                callbackStages.set(request, "token_refresh");
+                const refreshed = await tokenRequest(new URLSearchParams({ grant_type: "refresh_token", refresh_token: credentials.refreshToken }));
+                if (refreshed.sub !== exchanged.sub || refreshed.authorizationId !== credentials.authorizationId) fail(502, "授权账号不一致");
+                credentials = refreshed;
+            }
+            callbackStages.set(request, "credential_storage");
+            await db.query("UPDATE canvas_users SET oauth_credentials=$2 WHERE id=$1", [userId, encrypt(credentials, config.ENCRYPTION_KEY)]);
+            const account = await (async () => {
+                callbackStages.set(request, "userinfo");
+                const response = await fetch(new URL("/api/oauth-provider/userinfo", config.LLMROAM_URL), { headers: { ...clientHeaders, Authorization: `Bearer ${credentials.accessToken}` } });
+                if (!response.ok) fail(response.status === 429 ? 429 : response.status === 401 ? 401 : 502, "无法获取授权用户信息");
+                const profile = profileSchema.parse(await response.json());
+                if (profile.sub !== exchanged.sub) fail(502, "授权账号不一致");
+                callbackStages.set(request, "wallet_settings");
+                return { profile, balance: await walletBalance(profile) };
+            })().catch(error => { callbackFailure = error; return null; });
+            if (!account) return;
+            callbackStages.set(request, "session_storage");
+            const { profile, balance } = account;
+            await db.query("UPDATE canvas_users SET profile=$2,last_login_at=now(),profile_updated_at=now() WHERE id=$1", [userId, { id: userId, displayId: profile.sub, username: profile.username, displayName: profile.display_name, avatarUrl: profile.avatar_url || "", role: profile.role, ...balance }]);
             if (request.cookies[cookieName]) await db.query("DELETE FROM canvas_sessions WHERE id_hash=$1", [digest(request.cookies[cookieName]!)]);
-            await db.query("INSERT INTO canvas_sessions VALUES($1,$2,$3,$4)", [digest(raw), userId, encrypt(credentials, config.ENCRYPTION_KEY), new Date(Date.now() + config.SESSION_SECONDS * 1000)]);
+            await db.query("INSERT INTO canvas_sessions(id_hash,user_id,expires_at) VALUES($1,$2,$3)", [digest(raw), userId, new Date(Date.now() + config.SESSION_SECONDS * 1000)]);
         });
+        if (callbackFailure) throw callbackFailure;
         reply.setCookie(cookieName, raw, { ...cookie, maxAge: config.SESSION_SECONDS });
         return reply.redirect(flow.rows[0].return_path);
     });
     app.get("/api/auth/session", async (request, reply) => {
         reply.header("Cache-Control", "no-store");
         const current = await session(request);
-        if (!current) return { user: null };
-        const user = await pool.query("SELECT profile FROM canvas_users WHERE id=$1", [current.userId]);
-        return { user: user.rows[0].profile };
+        if (!current) { await endSession(request, reply); return { user: null }; }
+        const user = (await pool.query("SELECT profile,oauth_credentials FROM canvas_users WHERE id=$1", [current.userId])).rows[0];
+        return { user: { ...user.profile, authorizationId: decrypt<Credentials>(user.oauth_credentials, config.ENCRYPTION_KEY).authorizationId } };
     });
     app.get("/api/account/overview", async (request, reply) => {
         reply.header("Cache-Control", "no-store");
         const current = await requireSession(request);
         const user = await cachedAccountUser(current);
-        const usage = await pool.query("SELECT (SELECT COALESCE(SUM(bytes),0) FROM canvas_media WHERE user_id=$1 AND (ready OR expires_at>now())) + (SELECT COALESCE(SUM(octet_length(data::text)),0) FROM canvas_records WHERE user_id=$1 AND NOT deleted) AS bytes", [current.userId]);
+        const [usedBytes,quotaBytes] = await Promise.all([storageUsage(pool,current.userId),storageQuota(pool,config,current.userId)]);
         return {
             user,
-            storage: { usedBytes: Number(usage.rows[0]?.bytes || 0), quotaBytes: config.USER_STORAGE_BYTES },
+            storage: { usedBytes, quotaBytes },
             links: { rechargeUrl: new URL("/wallet", config.LLMROAM_URL).href },
         };
     });
@@ -155,13 +221,21 @@ export function authService(app: FastifyInstance, pool: Pool, config: Config) {
         return { success: true };
     });
     app.post("/api/auth/logout", async (request, reply) => {
-        const current = await session(request);
-        if (current) {
-            accountUsers.delete(current.hash);
-            await pool.query("DELETE FROM canvas_sessions WHERE id_hash=$1", [current.hash]);
-        }
-        reply.clearCookie(cookieName, cookie);
+        await endSession(request, reply);
         return { success: true };
     });
-    return { requireSession };
+    async function requireAdmin(request: FastifyRequest) {
+        const current = await requireSession(request);
+        // Permissions are checked against the provider for every admin request, independently of the wallet cache.
+        const profile = accountProfileSchema.parse(await (await authorized(current,"/api/user/self")).json()).data;
+        if (!isAdminRole(profile.role)) fail(403,"需要管理员权限");
+        return current;
+    }
+    async function requireSuperAdmin(request: FastifyRequest) {
+        const current = await requireSession(request);
+        const profile = accountProfileSchema.parse(await (await authorized(current,"/api/user/self")).json()).data;
+        if (!isSuperAdminRole(profile.role)) fail(403,"需要超级管理员权限");
+        return current;
+    }
+    return { requireSession, requireAdmin, requireSuperAdmin };
 }

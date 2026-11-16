@@ -1,8 +1,8 @@
 import { memo, useEffect, useMemo, useRef, useState, useSyncExternalStore, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
-import { App, Dropdown, Empty, Input, Popconfirm, Select, Spin, Tag } from "antd";
+import { App, Alert, Button, Drawer, Dropdown, Empty, Input, Select, Spin, Tabs, Tag } from "antd";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
-import { ArrowLeft, BookOpen, Check, ChevronDown, ChevronRight, Download, Ellipsis, Eye, FilePenLine, FileText, Folder, FolderOpen, Image as ImageIcon, LayoutGrid, Library, ListChecks, MessageSquareText, Music2, Plus, Rows3, Save, Search, Settings2, Square, Trash2, Type, Video } from "lucide-react";
+import { ArrowLeft, BookOpen, Check, ChevronDown, ChevronRight, Download, Ellipsis, Eye, FilePenLine, FileText, Folder, Images, Image as ImageIcon, LayoutGrid, Library, ListChecks, MessageSquareText, Music2, Plus, Rows3, Save, Search, Settings2, Square, Trash2, Type, Video, Workflow } from "lucide-react";
 import { motion } from "motion/react";
 import { useTranslation } from "react-i18next";
 
@@ -11,32 +11,36 @@ import { exportCanvasNodes } from "@/lib/canvas/canvas-export";
 import { getNodeDefinition } from "@/lib/canvas/node-registry";
 import { cn } from "@/lib/utils";
 import { PromptDetailDialog } from "@/pages/prompts/components/prompt-detail-dialog";
-import { fetchSourcePrompts, type Prompt } from "@/services/api/prompts";
+import { fetchSourcePrompts, fetchPublicPromptSources, type Prompt } from "@/services/api/prompts";
 import { uploadMediaFile } from "@/services/file-storage";
 import { previewUrlFor, subscribeImagePreviews, getImagePreviewRevision, uploadImage } from "@/services/image-storage";
-import { useAssetStore, type Asset, type AssetKind } from "@/stores/use-asset-store";
-import { usePromptSourceStore } from "@/stores/use-prompt-source-store";
-import { CANVAS_SIDE_PANEL_MAX_WIDTH, CANVAS_SIDE_PANEL_MIN_WIDTH, CANVAS_SIDE_PANEL_MOTION_MS, useCanvasSidePanelStore } from "@/stores/use-canvas-side-panel-store";
+import { useAssetStore, type Asset } from "@/stores/use-asset-store";
+import { fetchAdminWorkflows, fetchLibrary, type LibraryItem } from "@/services/api/admin";
+import { Streamdown } from "streamdown";
+import { CANVAS_SIDE_PANEL_MAX_WIDTH, CANVAS_SIDE_PANEL_MIN_WIDTH, CANVAS_SIDE_PANEL_MOTION_MS, CANVAS_SIDE_PANEL_NAV_WIDTH as NAV_WIDTH, useCanvasSidePanelStore, type CanvasSidePanelTab as PanelTab } from "@/stores/use-canvas-side-panel-store";
 import { useThemeStore } from "@/stores/use-theme-store";
+import { useUserStore } from "@/stores/use-user-store";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 
 import type { InsertAssetPayload } from "./asset-picker-modal";
+import { WorkflowDetail } from "./workflow-detail";
+import { CanvasPublicAssets } from "./canvas-public-assets";
+import { ASSET_GROUPS, CanvasAssetCard, CanvasAssetGroup } from "./canvas-asset-items";
+import { WORKFLOW_DRAG_TYPE } from "@/lib/canvas/tutorial-workflow";
 
 const PANEL_MOTION_SECONDS = CANVAS_SIDE_PANEL_MOTION_MS / 1000;
 const PANEL_EASE = [0.22, 1, 0.36, 1] as const;
-const NAV_WIDTH = 72;
-
-type PanelTab = "projects" | "tutorials" | "canvas" | "assets" | "prompts";
-
 type Props = {
     projectId: string;
+    workflow?: { id?: string; busy: boolean };
     nodes: CanvasNodeData[];
     selectedNodeIds: Set<string>;
     onFocusNode: (nodeId: string) => void;
     onPreviewNode: (nodeId: string) => void;
     onHoverNode: (nodeId: string | null) => void;
     onInsertAsset: (payload: InsertAssetPayload) => void;
+    onInsertWorkflow: (id: string) => Promise<void>;
     onSave: () => Promise<void>;
 };
 
@@ -56,10 +60,11 @@ const STATUS_COLOR: Record<string, string> = {
     idle: "transparent",
 };
 
-export function CanvasSidePanel({ projectId, nodes, selectedNodeIds, onFocusNode, onPreviewNode, onHoverNode, onInsertAsset, onSave }: Props) {
+export function CanvasSidePanel({ projectId, workflow, nodes, selectedNodeIds, onFocusNode, onPreviewNode, onHoverNode, onInsertAsset, onInsertWorkflow, onSave }: Props) {
     const { t } = useTranslation();
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
-    const [tab, setTab] = useState<PanelTab | null>(null);
+    const tab = useCanvasSidePanelStore(state => state.tab);
+    const setTab = useCanvasSidePanelStore(state => state.setTab);
     const [lastTab, setLastTab] = useState<PanelTab>("canvas");
     const width = useCanvasSidePanelStore((state) => state.width);
     const panelOpen = useCanvasSidePanelStore((state) => state.panelOpen);
@@ -100,26 +105,26 @@ export function CanvasSidePanel({ projectId, nodes, selectedNodeIds, onFocusNode
             style={{ overflow: tab ? "hidden" : "visible", pointerEvents: panelClosing ? "none" : undefined }}
         >
             <motion.aside
-                className={cn("pointer-events-auto flex shrink-0 overflow-hidden", tab ? "relative h-full border-r" : "absolute left-0 top-1/2 h-auto -translate-y-1/2 flex-col items-center rounded-[18px] border px-2 py-3 shadow-lg")}
+                className={cn("pointer-events-auto flex shrink-0 overflow-hidden", tab ? "relative h-full border-r" : "absolute left-0 top-1/2 h-auto -translate-y-1/2 flex-col items-center rounded-xl border p-2 shadow-lg backdrop-blur")}
                 initial={{ x: -48 }}
                 animate={{ x: panelClosing ? -28 : 0 }}
                 transition={{ duration: resizing ? 0 : PANEL_MOTION_SECONDS, ease: PANEL_EASE }}
-                style={{ width: tab ? width : NAV_WIDTH, background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text, boxShadow: tab ? undefined : "0 12px 32px rgba(0,0,0,.18)" }}
+                style={{ width: tab ? width : NAV_WIDTH, background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: tab ? theme.node.text : theme.toolbar.item, boxShadow: tab ? undefined : theme.toolbar.shadow }}
                 data-canvas-no-zoom
             >
                 {!tab ? (
                     <div className="flex w-full shrink-0 flex-col items-center justify-center gap-1">
-                        <SideNavButton label={t("canvas.sidePanel.projects")} icon={<Library className="size-5" />} theme={theme} onClick={() => (setLastTab("projects"), setTab("projects"))} />
-                        <SideNavButton label={t("canvas.sidePanel.tutorials")} icon={<BookOpen className="size-5" />} theme={theme} onClick={() => (setLastTab("tutorials"), setTab("tutorials"))} />
-                        <div className="my-1 h-px w-8" style={{ background: theme.toolbar.border }} />
-                        <SideNavButton label={t("canvas.sidePanel.canvas")} icon={<LayoutGrid className="size-5" />} theme={theme} onClick={() => (setLastTab("canvas"), setTab("canvas"))} />
-                        <SideNavButton label={t("canvas.sidePanel.assets")} icon={<FolderOpen className="size-5" />} theme={theme} onClick={() => (setLastTab("assets"), setTab("assets"))} />
-                        <SideNavButton label={t("canvas.sidePanel.prompts")} icon={<MessageSquareText className="size-5" />} theme={theme} onClick={() => (setLastTab("prompts"), setTab("prompts"))} />
-                        <div className="my-1 h-px w-8" style={{ background: theme.toolbar.border }} />
+                        <SideNavButton label={workflow ? "教程流程" : t("canvas.sidePanel.projects")} icon={workflow ? <Workflow className="size-4.5" /> : <Library className="size-4.5" />} theme={theme} onClick={() => (setLastTab("projects"), setTab("projects"))} />
+                        <SideNavButton label={t("canvas.sidePanel.tutorials")} icon={<BookOpen className="size-4.5" />} theme={theme} onClick={() => (setLastTab("tutorials"), setTab("tutorials"))} />
+                        <div className="my-1 h-px w-6" style={{ background: theme.toolbar.border }} />
+                        <SideNavButton label={t("canvas.sidePanel.canvas")} icon={<LayoutGrid className="size-4.5" />} theme={theme} onClick={() => (setLastTab("canvas"), setTab("canvas"))} />
+                        <SideNavButton label={t("canvas.sidePanel.assets")} icon={<Images className="size-4.5" />} theme={theme} onClick={() => (setLastTab("assets"), setTab("assets"))} />
+                        <SideNavButton label={t("canvas.sidePanel.prompts")} icon={<MessageSquareText className="size-4.5" />} theme={theme} onClick={() => (setLastTab("prompts"), setTab("prompts"))} />
+                        <div className="my-1 h-px w-6" style={{ background: theme.toolbar.border }} />
                         <SideNavButton
-                            label={t("canvas.sidePanel.save")}
-                            icon={<Save className={cn("size-5", saving && "animate-pulse")} />}
-                            disabled={saving}
+                            label={workflow ? "保存并返回" : t("canvas.sidePanel.save")}
+                            icon={<Save className={cn("size-4.5", (saving || workflow?.busy) && "animate-pulse")} />}
+                            disabled={saving || workflow?.busy}
                             theme={theme}
                             onClick={async () => {
                                 setSaving(true);
@@ -137,11 +142,11 @@ export function CanvasSidePanel({ projectId, nodes, selectedNodeIds, onFocusNode
                         <button type="button" onClick={() => setTab(null)} className="grid size-8 shrink-0 place-items-center rounded-full transition hover:bg-black/5 dark:hover:bg-white/10" style={{ color: theme.node.text }} aria-label={t("canvas.sidePanel.back")} title={t("canvas.sidePanel.back")}>
                             <ArrowLeft className="size-4" />
                         </button>
-                        <span className="truncate text-base font-semibold">{t(`canvas.sidePanel.${tab || lastTab}`)}</span>
+                        <span className="truncate text-base font-semibold">{workflow && (tab || lastTab) === "projects" ? "教程流程" : t(`canvas.sidePanel.${tab || lastTab}`)}</span>
                     </div>
                     <div className={cn("min-h-0 flex-1 overflow-hidden", tab === "canvas" ? "" : "hidden")}><CanvasNodesTab nodes={nodes} selectedNodeIds={selectedNodeIds} onFocusNode={onFocusNode} onPreviewNode={onPreviewNode} onHoverNode={onHoverNode} theme={theme} /></div>
-                    <div className={cn("min-h-0 flex-1 overflow-hidden", tab === "projects" ? "" : "hidden")}><CanvasProjectsTab projectId={projectId} theme={theme} /></div>
-                    <div className={cn("min-h-0 flex-1 overflow-hidden", tab === "tutorials" ? "" : "hidden")}><CanvasTutorialsTab theme={theme} /></div>
+                    <div className={cn("min-h-0 flex-1 overflow-hidden", tab === "projects" ? "" : "hidden")}>{workflow ? <CanvasWorkflowsTab tutorialId={workflow.id} busy={workflow.busy} enabled={tab === "projects"} theme={theme} /> : <CanvasProjectsTab projectId={projectId} theme={theme} />}</div>
+                    <div className={cn("min-h-0 flex-1 overflow-hidden", tab === "tutorials" ? "" : "hidden")}><CanvasTutorialsTab theme={theme} onInsert={onInsertWorkflow} /></div>
                     <div className={cn("min-h-0 flex-1 overflow-hidden", tab === "assets" ? "" : "hidden")}><CanvasAssetsTab onInsert={onInsertAsset} theme={theme} /></div>
                     <div className={cn("min-h-0 flex-1 overflow-hidden", tab === "prompts" ? "" : "hidden")}><CanvasPromptsTab onInsert={onInsertAsset} theme={theme} /></div>
                     <button type="button" className="absolute inset-y-0 right-0 z-40 w-4 translate-x-1/2 cursor-col-resize" onPointerDown={startResize} aria-label={t("canvas.sidePanel.resize")} />
@@ -149,6 +154,33 @@ export function CanvasSidePanel({ projectId, nodes, selectedNodeIds, onFocusNode
             </motion.aside>
         </motion.div>
     );
+}
+
+function CanvasWorkflowsTab({ tutorialId, busy, enabled, theme }: { tutorialId?: string; busy: boolean; enabled: boolean; theme: CanvasTheme }) {
+    const navigate = useNavigate();
+    const accountId = useUserStore(state => state.user?.id);
+    const [keyword, setKeyword] = useState("");
+    const [page, setPage] = useState(1);
+    const [expanded, setExpanded] = useState(true);
+    const pageSize = 20;
+    const query = useQuery({ queryKey: ["admin", "library", "tutorials", "workflow", accountId, keyword, page], queryFn: ({ signal }) => fetchAdminWorkflows({ keyword, page, pageSize }, signal), enabled });
+    return <div className="flex h-full flex-col">
+        <button type="button" disabled={busy || !tutorialId} onClick={() => navigate("/canvas/workflow/new")} className="mx-2.5 my-2.5 flex h-11 shrink-0 items-center justify-center gap-2 rounded-lg text-sm font-medium transition hover:bg-black/5 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-white/10"><Plus className="size-4" />新建教程流程</button>
+        <div className="px-3 pb-2"><Input size="small" allowClear prefix={<Search className="size-3.5" />} placeholder="搜索教程流程" value={keyword} onChange={event => { setKeyword(event.target.value); setPage(1); }} /></div>
+        <button type="button" onClick={() => setExpanded(value => !value)} className="flex w-full shrink-0 items-center gap-2 px-3 py-2 text-sm opacity-70 transition hover:opacity-100">
+            {expanded ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}<span className="min-w-0 flex-1 text-left">教程流程</span><span className="text-xs">{query.data?.total ?? 0}</span>
+        </button>
+        <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
+            {expanded ? <>
+                {query.isPending ? <div className="grid place-items-center py-6"><Spin /></div> : query.error ? <Alert type="error" title="教程流程加载失败" action={<button type="button" onClick={() => void query.refetch()}>重试</button>} /> : null}
+                {query.data?.items.map(item => <button key={item.id} type="button" disabled={busy} aria-current={item.id === tutorialId ? "page" : undefined} onClick={() => { if (item.id !== tutorialId) navigate(`/canvas/workflow/${encodeURIComponent(item.id)}`); }} className="mb-1 flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left text-sm transition hover:bg-black/5 disabled:cursor-not-allowed dark:hover:bg-white/10" style={item.id === tutorialId ? { background: theme.toolbar.activeBg, color: theme.toolbar.activeText } : undefined}>
+                    <Workflow className="size-5 shrink-0 opacity-70" /><span className="min-w-0 flex-1"><span className="block truncate font-medium">{item.data.title}</span><span className="block truncate text-xs opacity-50">{item.data.workflowSummary?.nodeCount ?? 0} 个节点 · {item.published ? "已发布" : "草稿 / 下架"}</span></span>
+                </button>)}
+                {query.isSuccess && !query.data.total ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={keyword ? "没有匹配的教程流程" : "暂无教程流程"} /> : null}
+            </> : null}
+        </div>
+        {expanded && (query.data?.total || 0) > pageSize ? <div className="flex shrink-0 items-center justify-between gap-2 px-3 py-3 text-xs"><button type="button" disabled={page === 1 || query.isFetching} onClick={() => setPage(value => value - 1)}>上一页</button><span>第 {page} 页</span><button type="button" disabled={page * pageSize >= (query.data?.total || 0) || query.isFetching} onClick={() => setPage(value => value + 1)}>下一页</button></div> : null}
+    </div>;
 }
 
 function CanvasProjectsTab({ projectId, theme }: { projectId: string; theme: CanvasTheme }) {
@@ -171,7 +203,7 @@ function CanvasProjectsTab({ projectId, theme }: { projectId: string; theme: Can
         }
     };
     return <div className="flex h-full flex-col">
-        <button type="button" onClick={create} className="m-3 flex h-11 items-center justify-center gap-2 rounded-lg border-2 text-sm font-medium transition hover:bg-black/5 dark:hover:bg-white/10" style={{ borderColor: theme.toolbar.border }}><Plus className="size-4" />{t("canvas.sidePanel.newProject")}</button>
+        <button type="button" onClick={create} className="flex h-11 items-center justify-center gap-2 rounded-lg border-2 text-sm font-medium transition hover:bg-black/5 dark:hover:bg-white/10" style={{ margin: 10, borderColor: theme.toolbar.border }}><Plus className="size-4" />{t("canvas.sidePanel.newProject")}</button>
         <div className="min-h-0 flex-1 overflow-y-auto pb-3">
             <button type="button" onClick={() => setProjectsOpen((open) => !open)} className="flex w-full items-center gap-2 px-3 py-2 text-sm opacity-70 transition hover:opacity-100">
                 {projectsOpen ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
@@ -209,24 +241,32 @@ function CanvasProjectsTab({ projectId, theme }: { projectId: string; theme: Can
     </div>;
 }
 
-const TUTORIAL_ITEMS = [
-    { title: "AI制图标准流", href: "/prompts", icon: ImageIcon },
-    { title: "AI动画标准流", href: "/video", icon: Video },
-] as const;
-
-function CanvasTutorialsTab({ theme }: { theme: CanvasTheme }) {
-    const { t } = useTranslation();
-    const navigate = useNavigate();
-    const [tutorialsOpen, setTutorialsOpen] = useState(true);
-    return <div className="flex h-full flex-col"><div className="px-3 py-2 text-xs opacity-60">{t("canvas.sidePanel.tutorialDescription")}</div><div className="min-h-0 flex-1 overflow-y-auto pb-3"><button type="button" onClick={() => setTutorialsOpen((open) => !open)} className="flex w-full items-center gap-2 px-3 py-2 text-sm opacity-70 transition hover:opacity-100">{tutorialsOpen ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}<span className="min-w-0 flex-1 text-left">{t("canvas.sidePanel.tutorials")}</span><span className="text-xs opacity-70">{TUTORIAL_ITEMS.length}</span></button>{tutorialsOpen ? <div className="px-2">{TUTORIAL_ITEMS.map(({ title, href, icon: Icon }) => <button key={href} type="button" onClick={() => href.startsWith("/") ? navigate(href) : window.open(href, "_blank", "noopener,noreferrer")} className="flex w-full items-center gap-3 rounded-lg px-2 py-3 text-left text-sm transition hover:bg-black/5 dark:hover:bg-white/10"><Icon className="size-5 shrink-0" style={{ color: theme.toolbar.activeText }} /><span className="min-w-0 flex-1 truncate">{title}</span><span className="text-xs opacity-45">{t("canvas.sidePanel.tutorial")}</span></button>)}</div> : null}</div></div>;
+function CanvasTutorialsTab({ theme, onInsert }: { theme: CanvasTheme; onInsert: (id: string) => Promise<void> }) {
+    const navigate=useNavigate();const [selected,setSelected]=useState<LibraryItem|null>(null);
+    const [workflowId,setWorkflowId]=useState<string|null>(null);
+    const [page,setPage]=useState(1);
+    const query=useQuery({queryKey:["library","tutorials",page],queryFn:()=>fetchLibrary("tutorials",{page,pageSize:20})});
+    return <div className="flex h-full flex-col"><div className="px-3 py-2 text-xs opacity-60">教程中心</div><div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
+    {query.isPending?<Spin/>:query.error?<Alert type="error" title="公共教程加载失败" action={<button onClick={()=>void query.refetch()}>重试</button>}/>:null}
+    {query.data?.items.map(item=>{
+        const workflow=item.data.format==="workflow";
+        const Icon=workflow?Workflow:BookOpen;
+        return <div key={item.id} draggable={workflow} onDragStart={event=>{if(workflow){event.dataTransfer.setData(WORKFLOW_DRAG_TYPE,item.id);event.dataTransfer.effectAllowed="copy";}}} className="flex items-center gap-1 rounded-lg transition hover:bg-black/5 dark:hover:bg-white/10">
+            <button type="button" onClick={()=>{if(workflow)setWorkflowId(item.id);else if(item.data.format==="markdown")setSelected(item);else if(item.data.href?.startsWith("/"))navigate(item.data.href);else if(item.data.href)window.open(item.data.href,"_blank","noopener,noreferrer");}} className="flex min-w-0 flex-1 items-center gap-3 px-2 py-3 text-left" title={workflow?"查看节点流程，可拖入画布":undefined}><Icon className="size-5 shrink-0" style={{color:theme.toolbar.activeText}}/><span className="min-w-0 flex-1"><span className="block truncate text-sm">{item.data.title}</span><span className="text-xs opacity-50">{workflow?`${item.data.workflowSummary?.nodeCount||0} 个节点`:item.data.category||item.data.description}</span></span></button>
+            {workflow?<button type="button" className="mr-1 flex shrink-0 items-center gap-1 rounded px-2 py-1 text-xs hover:bg-black/5 dark:hover:bg-white/10" onClick={()=>void onInsert(item.id)} aria-label={`插入流程：${item.data.title}`}><Plus className="size-3.5"/>插入画布</button>:null}
+        </div>;
+    })}
+    {query.isSuccess&&!query.data.total?<Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无公开教程"/>:null}
+    {(query.data?.total||0)>20?<div className="flex justify-between py-3 text-xs"><button disabled={page===1} onClick={()=>setPage(page-1)}>上一页</button><span>{page}</span><button disabled={page*20>=(query.data?.total||0)} onClick={()=>setPage(page+1)}>下一页</button></div>:null}
+    </div><Drawer title={selected?.data.title} size="large" open={!!selected} onClose={()=>setSelected(null)}><Streamdown>{selected?.data.content||""}</Streamdown></Drawer><WorkflowDetail id={workflowId} onClose={()=>setWorkflowId(null)} onInsert={onInsert}/></div>;
 }
 
 function SideNavButton({ label, icon, active, disabled, theme, onClick }: { label: string; icon: ReactNode; active?: boolean; disabled?: boolean; theme: CanvasTheme; onClick?: () => void }) {
+    const [hovered, setHovered] = useState(false);
     return (
-        <button type="button" onClick={onClick} disabled={disabled} className={cn("group relative grid size-10 place-items-center rounded-lg transition", disabled ? "cursor-not-allowed opacity-30" : "hover:bg-black/5 dark:hover:bg-white/10", active && "bg-black/5 dark:bg-white/10")} style={{ color: active ? theme.toolbar.activeText : theme.node.text }} aria-label={label} title={label}>
-            {icon}
+        <Button type="text" onClick={onClick} disabled={disabled} className="relative !h-8 !w-8 !min-w-8 !p-0" style={active ? { background: theme.toolbar.activeBg, color: theme.toolbar.activeText } : hovered && !disabled ? { background: theme.toolbar.itemHover, color: theme.toolbar.activeText } : { color: theme.toolbar.item, opacity: disabled ? 0.35 : 1 }} icon={icon} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)} aria-label={label} title={label}>
             {active ? <motion.span layoutId="sidePanelNavIndicator" className="absolute -left-1 h-6 w-0.5 rounded-full" style={{ background: theme.toolbar.activeText }} transition={{ type: "spring", stiffness: 500, damping: 34 }} /> : null}
-        </button>
+        </Button>
     );
 }
 
@@ -479,12 +519,6 @@ function CheckMark({ checked, theme }: { checked: boolean; theme: CanvasTheme })
 // Assets tab: collapsible type groups, tag filtering, and click-to-insert.
 // ---------------------------------------------------------------------------
 
-const ASSET_GROUPS: { kind: AssetKind; icon: typeof Square }[] = [
-    { kind: "image", icon: ImageIcon },
-    { kind: "video", icon: Video },
-    { kind: "text", icon: FileText },
-];
-
 function buildInsertPayload(asset: Asset): InsertAssetPayload {
     if (asset.kind === "text") return { kind: "text", content: asset.data.content, title: asset.title };
     if (asset.kind === "video") return { kind: "video", url: asset.data.url, storageKey: asset.data.storageKey, title: asset.title, width: asset.data.width, height: asset.data.height };
@@ -497,9 +531,9 @@ const CanvasAssetsTab = memo(function CanvasAssetsTab({ onInsert, theme }: { onI
     const assets = useAssetStore((state) => state.assets);
     const addAsset = useAssetStore((state) => state.addAsset);
     const removeAsset = useAssetStore((state) => state.removeAsset);
+    const [scope, setScope] = useState("mine");
     const [keyword, setKeyword] = useState("");
     const [tagFilter, setTagFilter] = useState<string>("all");
-    const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
     const [uploading, setUploading] = useState(false);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -544,13 +578,16 @@ const CanvasAssetsTab = memo(function CanvasAssetsTab({ onInsert, theme }: { onI
 
     return (
         <div className="flex h-full flex-col">
-            <div className="flex items-center gap-2 px-3 pb-2 pt-1">
-                <Input size="small" allowClear prefix={<Search className="size-3.5 text-stone-400" />} placeholder={t("canvas.sidePanel.searchAssets")} value={keyword} onChange={(e) => setKeyword(e.target.value)} />
+            <Tabs className="shrink-0 px-3 [&_.ant-tabs-nav-wrap]:ml-[13px]" activeKey={scope} onChange={setScope} tabBarStyle={{ marginBottom: 8 }} items={[{ key: "mine", label: t("assets.title") }, { key: "public", label: t("assets.publicTitle") }]} />
+            <div className="flex shrink-0 items-center gap-2 px-3 pb-2 pt-1">
+                <Input className="min-w-0 flex-1" size="small" allowClear prefix={<Search className="size-3.5 text-stone-400" />} placeholder={t("canvas.sidePanel.searchAssets")} value={keyword} onChange={(e) => setKeyword(e.target.value)} />
                 <button
                     type="button"
-                    disabled={uploading}
+                    disabled={scope !== "mine" || uploading}
+                    aria-hidden={scope !== "mine"}
+                    tabIndex={scope === "mine" ? undefined : -1}
                     onClick={() => fileInputRef.current?.click()}
-                    className="flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-xs font-semibold transition hover:bg-black/5 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-white/10"
+                    className={cn("flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-xs font-semibold transition hover:bg-black/5 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-white/10", scope !== "mine" && "invisible")}
                     style={{ color: theme.node.text }}
                 >
                     <Plus className="size-3.5" />
@@ -558,8 +595,8 @@ const CanvasAssetsTab = memo(function CanvasAssetsTab({ onInsert, theme }: { onI
                 </button>
                 <input ref={fileInputRef} type="file" accept="image/*,video/*" multiple className="hidden" onChange={(e) => void handleFiles(e.target.files)} />
             </div>
-            {allTags.length ? (
-                <div className="flex flex-wrap gap-1.5 px-3 pb-2">
+            <div className={cn("min-h-0 flex-1 flex-col", scope === "mine" ? "flex" : "hidden")}>
+                <div className="hide-scrollbar flex h-9 shrink-0 items-start gap-1.5 overflow-x-auto whitespace-nowrap px-3 pb-2 [&_.ant-tag]:shrink-0">
                     <Tag.CheckableTag checked={tagFilter === "all"} className={cn("prompt-filter-tag", tagFilter === "all" && "is-active")} onChange={() => setTagFilter("all")}>
                         {t("common.all")}
                     </Tag.CheckableTag>
@@ -569,79 +606,22 @@ const CanvasAssetsTab = memo(function CanvasAssetsTab({ onInsert, theme }: { onI
                         </Tag.CheckableTag>
                     ))}
                 </div>
-            ) : null}
-            <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
-                {groups.length ? (
-                    <div className="space-y-1">
-                        {groups.map((group) => {
-                            const isCollapsed = collapsed[group.kind];
-                            return (
-                                <div key={group.kind}>
-                                    <button
-                                        type="button"
-                                        onClick={() => setCollapsed((prev) => ({ ...prev, [group.kind]: !prev[group.kind] }))}
-                                        className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1.5 text-left text-xs font-semibold opacity-75 transition hover:opacity-100"
-                                    >
-                                        <ChevronRight className={cn("size-3.5 transition-transform", !isCollapsed && "rotate-90")} />
-                                        <group.icon className="size-3.5" />
-                                        <span>{t(`assets.kinds.${group.kind}`)}</span>
-                                        <span className="opacity-50">{group.items.length}</span>
-                                    </button>
-                                    {isCollapsed ? null : (
-                                        <div className="grid grid-cols-2 gap-2 px-1 pb-2 pt-1">
-                                            {group.items.map((asset) => (
-                                                <AssetCard key={asset.id} asset={asset} theme={theme} onInsert={() => onInsert(buildInsertPayload(asset))} onRemove={() => (removeAsset(asset.id), message.success(t("canvas.sidePanel.assetRemoved")))} />
-                                            ))}
-                                        </div>
-                                    )}
-                                </div>
-                            );
-                        })}
-                    </div>
-                ) : (
-                    <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("canvas.sidePanel.noAssets")} className="pt-16" />
-                )}
+                <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3 [scrollbar-gutter:stable]">
+                    {groups.length ? (
+                        <div className="space-y-1">
+                            {groups.map(group => <CanvasAssetGroup key={group.kind} kind={group.kind} count={group.items.length}>
+                                {group.items.map(asset => <CanvasAssetCard key={asset.id} asset={asset} theme={theme} onInsert={() => onInsert(buildInsertPayload(asset))} onRemove={() => (removeAsset(asset.id), message.success(t("canvas.sidePanel.assetRemoved")))} />)}
+                            </CanvasAssetGroup>)}
+                        </div>
+                    ) : (
+                        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("canvas.sidePanel.noAssets")} className="pt-16" />
+                    )}
+                </div>
             </div>
+            <CanvasPublicAssets active={scope === "public"} keyword={keyword} onInsert={onInsert} />
         </div>
     );
 });
-
-function AssetCard({ asset, theme, onInsert, onRemove }: { asset: Asset; theme: CanvasTheme; onInsert: () => void; onRemove: () => void }) {
-    const { t } = useTranslation();
-    return (
-        <div className="group relative aspect-square overflow-hidden rounded-xl border transition duration-200 hover:-translate-y-0.5 hover:shadow-lg" style={{ borderColor: theme.node.stroke, background: theme.node.panel }}>
-            <AssetCover asset={asset} />
-            <div className="absolute inset-0 flex items-center justify-center gap-2.5 opacity-0 transition duration-200 group-hover:opacity-100">
-                <button
-                    type="button"
-                    onClick={onInsert}
-                    className="grid size-8 place-items-center rounded-full bg-white/90 text-stone-700 shadow-sm backdrop-blur transition hover:bg-white hover:text-stone-900 dark:bg-black/60 dark:text-stone-100 dark:hover:bg-black/80"
-                    aria-label={t("canvas.sidePanel.inserted")}
-                >
-                    <Plus className="size-4" />
-                </button>
-                <Popconfirm title={t("canvas.sidePanel.removeAssetTitle")} okText={t("canvas.sidePanel.remove")} cancelText={t("common.cancel")} okButtonProps={{ danger: true }} onConfirm={onRemove}>
-                    <button
-                        type="button"
-                        className="grid size-8 place-items-center rounded-full bg-white/90 text-stone-700 shadow-sm backdrop-blur transition hover:bg-white hover:text-red-500 dark:bg-black/60 dark:text-stone-100 dark:hover:bg-black/80 dark:hover:text-red-400"
-                        aria-label={t("canvas.sidePanel.removeAsset")}
-                    >
-                        <Trash2 className="size-4" />
-                    </button>
-                </Popconfirm>
-            </div>
-        </div>
-    );
-}
-
-function AssetCover({ asset }: { asset: Asset }) {
-    if (asset.kind === "text") return <div className="size-full overflow-hidden whitespace-pre-wrap break-words p-2.5 text-[11px] leading-snug opacity-80">{asset.data.content}</div>;
-    if (asset.kind === "video") {
-        if (asset.coverUrl) return <img src={asset.coverUrl} alt="" className="size-full object-cover transition duration-300 group-hover:scale-[1.04]" />;
-        return <video src={`${asset.data.url}#t=0.1`} muted playsInline preload="metadata" className="size-full object-cover transition duration-300 group-hover:scale-[1.04]" />;
-    }
-    return <img src={asset.coverUrl || asset.data.dataUrl} alt="" className="size-full object-cover transition duration-300 group-hover:scale-[1.04]" />;
-}
 
 // ---------------------------------------------------------------------------
 // Prompt library tab: collapsible source groups, lazy loading, and copy or text-node insertion actions.
@@ -650,8 +630,8 @@ function AssetCover({ asset }: { asset: Asset }) {
 const CanvasPromptsTab = memo(function CanvasPromptsTab({ onInsert, theme }: { onInsert: (payload: InsertAssetPayload) => void; theme: CanvasTheme }) {
     const { message } = App.useApp();
     const { t } = useTranslation();
-    const sources = usePromptSourceStore((state) => state.sources);
-    const enabledSources = useMemo(() => sources.filter((source) => source.enabled), [sources]);
+    const sourcesQuery = useQuery({queryKey:["library","prompt-sources"],queryFn:fetchPublicPromptSources});
+    const enabledSources = sourcesQuery.data?.items || [];
     const [keyword, setKeyword] = useState("");
     const [expanded, setExpanded] = useState<Record<string, boolean>>({});
     const [detail, setDetail] = useState<Prompt | null>(null);
@@ -672,7 +652,7 @@ const CanvasPromptsTab = memo(function CanvasPromptsTab({ onInsert, theme }: { o
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
                 <div className="space-y-1">
-                    {enabledSources.length ? enabledSources.map((source) => (
+                    {sourcesQuery.error ? <Alert type="error" title="公共提示词库加载失败" action={<button onClick={()=>void sourcesQuery.refetch()}>重试</button>}/> : sourcesQuery.isPending ? <Spin/> : enabledSources.length ? enabledSources.map((source) => (
                         <PromptSourceGroup
                             key={source.id}
                             sourceId={source.id}
@@ -714,7 +694,7 @@ function PromptSourceGroup({
     const { t } = useTranslation();
     // Cache a source after its first expansion to avoid repeated requests; search results also need the data for counts.
     const showResults = open || !!keyword.trim();
-    const query = useQuery({ queryKey: ["side-panel-prompts", sourceId], queryFn: () => fetchSourcePrompts(sourceId), enabled: showResults, staleTime: 1000 * 60 * 60 });
+    const query = useQuery({ queryKey: ["side-panel-prompts", sourceId], queryFn: () => fetchSourcePrompts(sourceId), enabled: showResults });
 
     const filtered = useMemo(() => {
         const items = query.data || [];
@@ -729,7 +709,7 @@ function PromptSourceGroup({
         <div>
             <button type="button" onClick={onToggle} className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1.5 text-left text-xs font-semibold opacity-75 transition hover:opacity-100">
                 <ChevronRight className={cn("size-3.5 transition-transform", showResults && "rotate-90")} />
-                <BookOpen className="size-3.5" />
+                <MessageSquareText className="size-3.5" />
                 <span className="min-w-0 flex-1 truncate">{sourceName}</span>
                 {showResults && query.isSuccess ? <span className="opacity-50">{filtered.length}</span> : null}
             </button>

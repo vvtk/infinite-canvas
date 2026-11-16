@@ -1,6 +1,6 @@
 import { FolderPlus, Search } from "lucide-react";
 import { type ReactNode, type UIEvent, useEffect, useState } from "react";
-import { App, Button, Empty, Input, Spin, Tag } from "antd";
+import { App, Alert, Button, Empty, Input, Spin, Tag } from "antd";
 import { useTranslation } from "react-i18next";
 
 import { PromptCard } from "@/components/prompts/prompt-card";
@@ -49,6 +49,7 @@ export default function PromptsPage() {
                         <h1 className="text-2xl font-semibold text-stone-950 dark:text-stone-100">{t("prompts.title")}</h1>
                         <p className="mt-1 text-sm text-stone-500 dark:text-stone-400">{t("prompts.total", { count: totalPrompts })}</p>
                     </div>
+                    {query.error?<Alert type="error" className="mt-4" title="公共提示词库加载失败" description={query.error.message} action={<Button onClick={()=>void query.refetch()}>重试</Button>}/>:null}
                     <div className="mt-5 grid items-start gap-5 lg:grid-cols-[240px_minmax(0,1fr)] lg:gap-6">
                         <aside className="thin-scrollbar max-h-72 overflow-y-auto border-b border-stone-200 pb-5 lg:sticky lg:top-0 lg:max-h-[calc(100dvh-6rem)] lg:border-b-0 lg:border-r lg:pb-8 lg:pr-5 dark:border-stone-800">
                             <PromptFilter label={t("prompts.category")} options={promptCategoryOptions} selected={selectedCategory} onChange={setSelectedCategory} />

@@ -18,7 +18,7 @@ const neutral = {
         primary: "#fafafa",
         primaryHover: "#ffffff",
         primaryText: "#171717",
-        elevatedBg: "#1c1917",
+        elevatedBg: "#171717",
         itemHoverBg: "rgba(250, 250, 249, 0.08)",
         itemSelectedBg: "rgba(250, 250, 249, 0.12)",
         itemSelectedHoverBg: "rgba(250, 250, 249, 0.16)",
@@ -42,6 +42,7 @@ export function getAntThemeConfig(dark: boolean): ThemeConfig {
             colorLinkActive: color.primary,
             colorTextLightSolid: color.primaryText,
             colorBgElevated: color.elevatedBg,
+            colorBgContainer: color.elevatedBg,
             controlItemBgHover: color.itemHoverBg,
             controlItemBgActive: color.itemSelectedBg,
             controlItemBgActiveHover: color.itemSelectedHoverBg,
@@ -52,6 +53,7 @@ export function getAntThemeConfig(dark: boolean): ThemeConfig {
             },
             Dropdown: {
                 colorBgElevated: color.elevatedBg,
+            colorBgContainer: color.elevatedBg,
                 colorText: color.itemText,
                 controlItemBgHover: color.itemHoverBg,
                 controlItemBgActive: color.itemSelectedBg,
@@ -74,6 +76,8 @@ export function getAntThemeConfig(dark: boolean): ThemeConfig {
                 optionSelectedColor: color.itemText,
             },
             Table: {
+                headerBg: color.elevatedBg,
+                rowHoverBg: color.itemHoverBg,
                 rowSelectedBg: color.tableSelectedBg,
                 rowSelectedHoverBg: color.tableSelectedHoverBg,
             },

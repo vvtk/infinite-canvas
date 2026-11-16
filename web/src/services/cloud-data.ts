@@ -17,6 +17,7 @@ export function cleanCloudData(value: unknown): unknown {
     return Object.fromEntries(Object.entries(value).filter(([key]) => !/^(api.?key|access.?token|refresh.?token|password|authorization|preview|previewUrl|thumbnail)$/i.test(key)).map(([key, child]) => [key, cleanCloudData(child)]));
 }
 export function mediaKeys(value: unknown, keys = new Set<string>()): Set<string> {
+    if (typeof value === "string" && /^(image|video|audio|file|video-reference|audio-reference):/.test(value)) keys.add(value);
     if (!value || typeof value !== "object") return keys;
     for (const [key, child] of Object.entries(value)) {
         if (key === "storageKey" && typeof child === "string" && /^(image|video|audio|file|video-reference|audio-reference):/.test(child)) keys.add(child);
@@ -51,6 +52,8 @@ export async function hydrateMedia(value: unknown): Promise<unknown> {
         const url = await (input.storageKey.startsWith("image:") ? resolveImageUrl(input.storageKey) : resolveMediaUrl(input.storageKey));
         if (url) for (const field of ["url", "dataUrl", "imageUrl", "coverUrl", "content"]) if (field in output && !output[field]) output[field] = url;
     }
+    const cover = (output.metadata as { cover?: { url?: string } } | undefined)?.cover;
+    if (cover?.url) output.coverUrl = cover.url;
     return output;
 }
 export async function applyRecord(record: CloudRecord, prepared = false) {

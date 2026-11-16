@@ -5,7 +5,7 @@ import { useTranslation } from "react-i18next";
 import i18n from "@/i18n";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
-import { modelOptionLabel, modelOptionName, selectableModelsByCapability, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
+import { modelOptionLabel, modelOptionName, selectableModelsByCapability, useConfigStore, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
 
 type ModelPickerProps = {
     config: AiConfig;
@@ -22,8 +22,10 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
     const { t } = useTranslation();
     const pickerId = useId();
     const [open, setOpen] = useState(false);
-    const options = useMemo(() => Array.from(new Set([...(config.channelMode === "local" && !capability ? [value] : []), ...selectableModelsByCapability(config, capability)].filter((model): model is string => Boolean(model)))), [capability, config, value]);
-    const current = value || "";
+    const snapshot = useConfigStore(state => state.systemSnapshot);
+    const catalog = useConfigStore(state => state.systemCatalog);
+    const options = useMemo(() => selectableModelsByCapability(config, capability), [capability, config, snapshot, catalog]);
+    const current = value && options.includes(value) ? value : "";
     const pickerPlaceholder = placeholder || t("settingsPanels.model.select");
 
     useEffect(() => {
@@ -87,8 +89,9 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
 
 function emptyModelLabel(config: AiConfig, capability?: ModelCapability) {
     const label = capability ? i18n.t(`settingsPanels.model.capabilities.${capability}`) : "";
-    if (capability && config.models.length) return i18n.t("settingsPanels.model.assign", { capability: label });
-    return config.models.length ? i18n.t("settingsPanels.model.noMatch", { capability: label }) : i18n.t("settingsPanels.model.addFirst");
+    const hasModels = selectableModelsByCapability(config).length > 0;
+    if (capability && hasModels) return i18n.t("settingsPanels.model.assign", { capability: label });
+    return hasModels ? i18n.t("settingsPanels.model.noMatch", { capability: label }) : i18n.t("settingsPanels.model.addFirst");
 }
 
 function ModelLabel({ config, model }: { config: AiConfig; model: string }) {

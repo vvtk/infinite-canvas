@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import { requestEdit, requestGeneration, requestImageQuestion, type AiTextMessage } from "@/services/api/image";
 import { imageToDataUrl } from "@/services/image-storage";
 import { requestVideoGeneration, storeGeneratedVideo } from "@/services/api/video";
-import { decodeChannelModel, selectableModelsByCapability, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
+import { decodeChannelModel, getEffectiveConfig, selectableModelsByCapability, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
 import { buildGenerationConfig } from "@/lib/canvas/canvas-generation-helpers";
 import { buildNodeContext } from "@/lib/canvas/plugin-node-context";
 import { getNodeDefinition } from "@/lib/canvas/node-registry";
@@ -18,6 +18,7 @@ import type { CanvasConnection, CanvasNodeData, ViewportTransform } from "@/type
 type CanvasTheme = (typeof canvasThemes)[keyof typeof canvasThemes];
 
 type PluginHostParams = {
+    enabled?: boolean;
     effectiveConfig: AiConfig;
     isAiConfigReady: (config: AiConfig, model: string) => boolean;
     openConfigDialog: (open: boolean) => void;
@@ -49,9 +50,14 @@ export function usePluginHost(params: PluginHostParams) {
                 throw new Error(t("canvas.plugins.aiConfigRequired"));
             }
         };
+        const selectConfig = (capability: ModelCapability, model?: string) => {
+            const config = buildGenerationConfig(effectiveConfig, undefined, capability);
+            const selected = model || config.model;
+            return { ...getEffectiveConfig(config, capability, selected), model: selected };
+        };
         return {
             generateImage: async (prompt, options) => {
-                const config = { ...buildGenerationConfig(effectiveConfig, undefined, "image"), count: String(options?.count || 1), ...(options?.model ? { model: options.model } : {}), ...(options?.size ? { size: options.size } : {}) };
+                const config = { ...selectConfig("image", options?.model), count: String(options?.count || 1), ...(options?.size ? { size: options.size } : {}) };
                 ensureReady(config);
                 const references = toReferences(options?.references);
                 const items = references.length ? await requestEdit(config, prompt, references, { signal: options?.signal }) : await requestGeneration(config, prompt, { signal: options?.signal });
@@ -67,8 +73,7 @@ export function usePluginHost(params: PluginHostParams) {
             },
             generateVideo: async (prompt, options) => {
                 const config = {
-                    ...buildGenerationConfig(effectiveConfig, undefined, "video"),
-                    ...(options?.model ? { model: options.model } : {}),
+                    ...selectConfig("video", options?.model),
                     ...(options?.size ? { size: options.size } : {}),
                     ...(options?.seconds ? { videoSeconds: options.seconds } : {}),
                 };
@@ -77,7 +82,7 @@ export function usePluginHost(params: PluginHostParams) {
                 return { url: file.url, mimeType: file.mimeType, width: file.width, height: file.height, durationMs: file.durationMs };
             },
             generateText: async (prompt, options) => {
-                const config = { ...buildGenerationConfig(effectiveConfig, undefined, "text"), ...(options?.model ? { model: options.model } : {}) };
+                const config = selectConfig("text", options?.model);
                 ensureReady(config);
                 const messages: AiTextMessage[] = [...(options?.system ? [{ role: "system" as const, content: options.system }] : []), { role: "user" as const, content: prompt }];
                 const text = await requestImageQuestion(config, messages, (delta) => options?.onDelta?.(delta), { signal: options?.signal });
@@ -148,8 +153,8 @@ export function usePluginHost(params: PluginHostParams) {
 
     // Load installed remote plugins on startup.
     useEffect(() => {
-        void ensurePluginsLoaded();
-    }, []);
+        if (params.enabled !== false) void ensurePluginsLoaded();
+    }, [params.enabled]);
 
     return { pluginHost, renderPluginPanel, buildNodeToolbarItems };
 }

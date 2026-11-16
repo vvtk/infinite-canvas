@@ -3,7 +3,7 @@ import axios, { type AxiosRequestConfig } from "axios";
 import i18n from "@/i18n";
 import { buildApiUrl, withLocalProxy, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
 
-type RequestOptions = { signal?: AbortSignal };
+type RequestOptions = { signal?: AbortSignal;onUsage?:(payload:unknown)=>void };
 
 export type PluginHttpOptions = {
     headers?: Record<string, string>;
@@ -31,6 +31,7 @@ export type RunPluginArgs = {
     params?: Record<string, unknown>;
     signal?: AbortSignal;
     onDelta?: (text: string) => void;
+    onUsage?: (payload:unknown)=>void;
 };
 
 function pluginHeaders(extra?: Record<string, string>, hasJsonBody = false): Record<string, string> {
@@ -56,6 +57,7 @@ function createPluginHttp(config: AiConfig, options?: RequestOptions): PluginHtt
             responseType: opts?.responseType || "json",
             signal: options?.signal,
         });
+        options?.onUsage?.(response.data);
         return response.data;
     };
     return {
@@ -69,6 +71,7 @@ function createPluginHttp(config: AiConfig, options?: RequestOptions): PluginHtt
 function createPluginRequest(config: AiConfig, options?: RequestOptions) {
     return async (requestConfig: AxiosRequestConfig & { url: string }) => {
         const response = await axios.request({ ...requestConfig, url: pluginUrl(config, requestConfig.url), signal: options?.signal });
+        options?.onUsage?.(response.data);
         return response.data;
     };
 }
@@ -112,8 +115,8 @@ function createPoll(signal?: AbortSignal) {
  */
 export async function runModelPlugin<T = unknown>(args: RunPluginArgs): Promise<T> {
     const { config } = args;
-    const http = createPluginHttp(config, { signal: args.signal });
-    const request = createPluginRequest(config, { signal: args.signal });
+    const http = createPluginHttp(config, { signal: args.signal,onUsage:args.onUsage });
+    const request = createPluginRequest(config, { signal: args.signal,onUsage:args.onUsage });
     const poll = createPoll(args.signal);
     const runner = new Function(
         "prompt",
@@ -142,7 +145,7 @@ export async function runModelPlugin<T = unknown>(args: RunPluginArgs): Promise<
             args.videos || [],
             args.audios || [],
             args.messages || [],
-            args.params || {},
+            { stream: config.streamText !== false, returnBase64: config.returnBase64 !== false, ...args.params },
             config.model,
             config.baseUrl,
             config.apiKey,
@@ -174,6 +177,8 @@ export function getPluginVariables(): PluginVariable[] {
         { name: "audios", type: "File[]", desc: i18n.t("modelPlugin.variables.audios"), capabilities: ["video"] },
         { name: "messages", type: "{ role, content }[]", desc: i18n.t("modelPlugin.variables.messages"), capabilities: ["text"] },
         { name: "params", type: "object", desc: i18n.t("modelPlugin.variables.params") },
+        { name: "params.stream", type: "boolean", desc: "有效文本流式开关；脚本自行决定请求方式" },
+        { name: "params.returnBase64", type: "boolean", desc: "有效图片 Base64 开关；仅向支持的接口发送 response_format" },
         { name: "model", type: "string", desc: i18n.t("modelPlugin.variables.model") },
         { name: "baseUrl", type: "string", desc: i18n.t("modelPlugin.variables.baseUrl") },
         { name: "apiKey", type: "string", desc: i18n.t("modelPlugin.variables.apiKey") },
@@ -253,6 +258,7 @@ async function generateImage({
     quality,
     count,
     background,
+    returnBase64,
   },
   model,
   baseUrl,
@@ -274,7 +280,7 @@ async function generateImage({
         size: size,
         quality: quality,
         background: background,
-        response_format: "b64_json",
+        ...(!/gpt-image/i.test(model) && returnBase64 !== false ? { response_format: "b64_json" } : {}),
       },
     });
     const urls = [];
@@ -291,7 +297,7 @@ async function generateImage({
   form.set("size", size);
   form.set("quality", quality);
   form.set("background", background);
-  form.set("response_format", "b64_json");
+  if (!/gpt-image/i.test(model) && returnBase64 !== false) form.set("response_format", "b64_json");
   const imageField = images.length > 1 ? "image[]" : "image";
   for (const dataUrl of images) {
     form.append(imageField, await (await fetch(dataUrl)).blob(), "ref.png");

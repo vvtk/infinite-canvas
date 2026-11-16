@@ -23,7 +23,7 @@ http://localhost:3000
 
 ## 2. 配置模型
 
-打开右上角配置弹窗，填写自己的 `Base URL`、`API Key` 和模型名。第三方提示词和 WebDAV 都由浏览器前端直连。
+打开右上角配置弹窗，填写自己的 `Base URL`、`API Key` 和模型名。WebDAV 仍由浏览器直连；公共提示词改为读取本站 API，来源由管理员在后端维护，见[登录与云同步配置](/zh-CN/docs/development/cloud-sync)。仅启动前端时公共库会提示加载失败，本地画布和私有素材仍可使用。
 
 ## 3. 启动文档站
 
@@ -36,5 +36,5 @@ bun run dev
 ## 常见场景
 
 - 改画布、页面和交互：主要看 `web/`
-- 改提示词缓存：主要看 `web/src/services/api/prompts.ts`
+- 改公共提示词：前端入口为 `web/src/services/api/prompts.ts`，服务端来源同步为 `server/src/prompt-sync.ts`
 - 改文档站内容：主要看 `docs/content/docs/`

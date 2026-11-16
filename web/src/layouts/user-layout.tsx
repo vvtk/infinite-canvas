@@ -6,7 +6,7 @@ import { AppTopNav } from "@/components/layout/app-top-nav";
 
 export default function UserLayout({ children }: { children: ReactNode }) {
     const { pathname } = useLocation();
-    const showAgentPanel = /^\/canvas(?:\/|$)/.test(pathname);
+    const showAgentPanel = /^\/canvas(?:\/|$)/.test(pathname) && !/^\/canvas\/workflow(?:\/|$)/.test(pathname);
     return (
         <div className="flex h-dvh overflow-hidden bg-background text-foreground">
             <div className="flex min-w-0 flex-1 flex-col overflow-hidden">

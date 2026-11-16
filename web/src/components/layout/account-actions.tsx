@@ -5,14 +5,14 @@ import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { AccountOverviewStats } from "@/components/account/account-overview";
 import { fetchAccountOverview, type AccountOverview } from "@/services/api/account";
-import { clearAccountCredential, hasGuestData, importGuestData, setupAccountChannel } from "@/services/account";
+import { clearAccountCredential, hasGuestData, importGuestData, logoutAccount, setupAccountChannel } from "@/services/account";
 import { cloudRequest } from "@/services/api/cloud";
 import { cloudMeta } from "@/services/cloud-data";
-import { startCloudSync, stopCloudSync, syncNow } from "@/services/cloud-sync";
-import { localForageStorage } from "@/lib/localforage-storage";
-import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
+import { startCloudSync, syncNow, updateCloudSyncAvailability } from "@/services/cloud-sync";
+import { useSiteStore } from "@/stores/use-site-store";
 import { useCloudStore } from "@/stores/use-cloud-store";
 import { useUserStore } from "@/stores/use-user-store";
+import { useConfigStore } from "@/stores/use-config-store";
 
 let initializedAccount = "";
 
@@ -33,8 +33,10 @@ export function AccountActions({ style }: { style?: CSSProperties }) {
     const status = useCloudStore((state) => state.status);
     const error = useCloudStore((state) => state.error);
     const conflicts = useCloudStore((state) => state.conflicts);
+    const cloudStorageEnabled = useSiteStore((state) => state.settings?.userCloudStorageEnabled === true);
     const [busy, setBusy] = useState(false);
-    const [loginDialogOpen, setLoginDialogOpen] = useState(false);
+    const loginDialogOpen = useUserStore((state) => state.loginDialogOpen);
+    const setLoginDialogOpen = useUserStore((state) => state.setLoginDialogOpen);
     const [open, setOpen] = useState(false);
     const [overview, setOverview] = useState<AccountOverview | null>(null);
     const [overviewError, setOverviewError] = useState("");
@@ -43,16 +45,18 @@ export function AccountActions({ style }: { style?: CSSProperties }) {
     useEffect(() => {
         const url = new URL(window.location.href);
         if (!url.searchParams.has("auth_error")) return;
+        const reason = url.searchParams.get("auth_error") || "";
+        const errors: Record<string, string> = { access_denied: "loginDenied", invalid_grant: "loginExpired", rate_limited: "loginRateLimited", service_unavailable: "loginServiceUnavailable", provider_incompatible: "loginProviderIncompatible", callback_failed: "loginCallbackFailed" };
         url.searchParams.delete("auth_error");
         window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
-        void message.error(t("account.loginFailed"));
+        void message.error(t(`account.${errors[reason] || "loginFailed"}`));
     }, [message, t]);
 
     useEffect(() => {
         if (!user || initializedAccount === user.id) return;
         initializedAccount = user.id;
         startCloudSync();
-        void setupAccountChannel().catch((reason: Error) => {
+        void setupAccountChannel().then(() => useConfigStore.getState().activateSystemChannel(user.id)).catch((reason: Error) => {
             void message.warning(reason.message);
         });
         void hasGuestData()
@@ -100,13 +104,7 @@ export function AccountActions({ style }: { style?: CSSProperties }) {
     async function logout() {
         setBusy(true);
         try {
-            await stopCloudSync();
-            const { projects, deletedProjects } = useCanvasStore.getState();
-            await localForageStorage.setItem("infinite-canvas:canvas_store", JSON.stringify({ state: { projects, deletedProjects }, version: 0 }));
-            await clearAccountCredential();
-            await cloudRequest("/auth/logout", {}, "POST", null);
-            localStorage.removeItem("canvas:last-account");
-            window.location.assign("/");
+            await logoutAccount();
         } catch (reason) {
             void message.error((reason as Error).message);
             setBusy(false);
@@ -116,7 +114,7 @@ export function AccountActions({ style }: { style?: CSSProperties }) {
         setOpen(false);
         action();
     };
-    const labels = { local: t("account.syncLocal"), pending: t("account.syncPending"), syncing: t("account.syncing"), synced: t("account.synced"), error: t("account.syncError") };
+    const labels = { local: t("account.syncLocal"), pending: t("account.syncPending"), syncing: t("account.syncing"), synced: t("account.synced"), error: t("account.syncError"), disabled: "管理员已关闭云端存储" };
     const className = "inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-md px-2 text-sm transition hover:bg-black/5 dark:hover:bg-white/10 disabled:opacity-50";
     if (!user)
         return (
@@ -168,17 +166,17 @@ export function AccountActions({ style }: { style?: CSSProperties }) {
                                 {t("account.adminCenter")}
                             </AccountActionRow>
                         ) : null}
-                        <AccountActionRow
+                        {cloudStorageEnabled ? <AccountActionRow
                             icon={<RefreshCw className="size-4" />}
                             onClick={() =>
                                 closeAnd(() => {
-                                    void syncNow();
+                                    void useSiteStore.getState().load().then(() => { updateCloudSyncAvailability(); void syncNow(); });
                                 })
                             }
                         >
                             {error || `${t("account.cloudSync")}: ${labels[status]}`}
                             {conflicts ? ` · ${t("account.conflicts", { count: conflicts })}` : ""}
-                        </AccountActionRow>
+                        </AccountActionRow> : null}
                         <AccountActionRow
                             icon={<Settings2 className="size-4" />}
                             onClick={() =>
@@ -220,10 +218,10 @@ export function AccountActions({ style }: { style?: CSSProperties }) {
                 </div>
             )}
         >
-            <button type="button" className={className} style={style} disabled={busy} aria-label={t("account.menuLabel")} aria-expanded={open} title={error || labels[status]}>
+            <button type="button" className={className} style={style} disabled={busy} aria-label={t("account.menuLabel")} aria-expanded={open} title={cloudStorageEnabled ? error || labels[status] : undefined}>
                 <Avatar size={22} src={user.avatarUrl || undefined} icon={<UserRound className="size-3.5" />} />
                 <span className="hidden max-w-24 truncate sm:inline">{user.displayName || user.username}</span>
-                <span className={`size-1.5 rounded-full ${status === "error" ? "bg-red-500" : status === "synced" ? "bg-emerald-500" : "bg-amber-500"}`} />
+                {cloudStorageEnabled ? <span className={`size-1.5 rounded-full ${status === "error" ? "bg-red-500" : status === "synced" ? "bg-emerald-500" : "bg-amber-500"}`} /> : null}
             </button>
         </Dropdown>
     );

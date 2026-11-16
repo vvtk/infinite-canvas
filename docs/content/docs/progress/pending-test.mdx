@@ -5,6 +5,148 @@ description: Implemented changes that still need manual verification
 
 # Pending Tests
 
+## Qwen 音频声音列表
+
+- 音频设置、系统渠道偏好和画布音频设置应显示 `longanhuan_v3.1`、`longanlingxin_v3.1`、`xunanchuan_v3.1`、`longanfengyue_v3.1`，不再显示 Alloy、Ash 等 OpenAI 音色名称；选择任一音色后，Flash/Plus 请求应发送对应 Qwen 音色 ID。旧的 `alloy`、`ash`、`ballad`、`coral` 配置应自动映射到对应 Qwen 音色。待刷新页面后人工确认列表、切换和实际生成结果；本次未运行测试、语法检查或构建。
+- 画布音频设置中的四个长音色 ID按单列显示，按钮保持完整宽度并允许必要换行；待确认窄面板、深浅主题和按钮点击后的选中态。
+
+## 后台角色权限分级
+
+- 角色按 LLMRoam 约定区分为用户（1）、管理员（10）和超级管理员（100）。管理员保留用户、日志、提示词、教程、Skill 与素材管理，但不显示也不能通过接口访问系统配置、存储管理、系统渠道配置和系统渠道模型；超级管理员保留全部后台权限。待人工确认三种角色的菜单显示、直接访问受限地址时的跳转、受限接口返回 403，以及角色变更后旧会话按最新上游权限生效。
+- 已补充服务端权限回归用例；本次未执行测试、语法检查、构建或浏览器验收。
+
+## 模型选择器排除未配置渠道
+
+- 画布、图片和视频等共用模型列表只列出已填写 API 地址与 Key 的渠道模型，仍按模型能力及系统渠道的启用模型与上游模型交集筛选。未配置 Key 的“默认渠道”预置模型不再出现在下拉列表；已保存但不可用的当前模型显示“选择模型”，不更换已保存模型，生成前仍由配置校验阻止请求。无模型时提示添加渠道和模型。待人工确认空配置、仅系统渠道、私人渠道配置/清空 Key、空模型列表、能力筛选及已失效选择。已补充回归用例，未运行测试、语法检查、构建或浏览器验收；已检查 TODO，无新增待开发事项。
+
+## 图片与视频工作台渠道默认值
+
+- `/image`、`/video` 初始模型及参数沿用当前渠道配置：系统渠道读取后台默认值与本机个性化设置，私人渠道读取现有私人偏好。切换到其他渠道时清空页面临时参数并读取目标渠道默认值；同渠道切换模型保留临时参数。页面选择模型、调整参数及历史回填仅作用于当前页面，不再改写渠道默认配置；重新进入页面读取渠道默认值。待验收系统/私人渠道往返切换、后台默认值更新、图像数量/尺寸/质量、视频时长/分辨率/音频及历史记录回填后的实际生成。未运行测试、语法检查、构建或浏览器验收；已检查 TODO，无新增待开发事项。
+
+## 系统渠道模型分页
+
+- `/admin/system-channel-models` 默认每页显示 10 个模型，支持翻页、切换每页数量与总数展示，沿用现有行布局和后台分页样式。检查跨页修改能力与脚本后保存完整列表、跨页选择模型、删除末页最后一项自动回到有效页、空列表、重新加载返回首页，以及深浅主题和窄屏布局。本次未执行测试、语法检查、构建或浏览器验收；已检查 TODO，无新增待开发事项。
+
+## 用户列表云存储零用量
+
+- 后台用户列表中，已用空间为 0 时应显示 `0 B / 2.0 GB`（额度以用户实际配置为准），非零用量继续按原格式显示。待人工验收；本次未执行测试、语法检查或构建。已检查 TODO，无需调整。
+
+## AI tutorial workflows
+
+- Header consistency: replace the separate “API 与 Key” text button with ordinary canvas `UserStatusActions`, keeping the same plugin, configuration, language, theme, shortcuts and account controls in the same order. Configuration defaults to System Channel; Channels remains available for API URLs/keys, global models and local persistence. Reuse existing plugin-management and shortcut dialogs while workflows remain limited to six built-in node types. Manually verify both editor routes, each action, continuing drafts and manual generation after channel changes, credential exclusion from published tutorials, icon sizing/spacing, both themes, narrow layouts and blocked actions during saving. No tests, syntax/type checks or builds were run; TODO was reviewed with no new development items.
+
+Implemented code and formal regression cases; tests, syntax/type checks, builds and browser acceptance have not been run. No commit, push or deployment was performed. Existing Markdown/link tutorials remain available.
+
+- Administration: enter the full-screen canvas from tutorial management at `/canvas/workflow/new`, reopen at `/canvas/workflow/:id`, and edit text, image, video, audio, configuration and group nodes. Check connections, grouping, example-media uploads, undo/redo, title/description/cover/category/tags/order, publication, withdrawal and deletion. Verify the administrator session before loading drafts. The editor has no admin sidebar, Agent panel or plugin-node entry and creates no ordinary user canvas; `/canvas/` remains the ordinary canvas list.
+- Drafts and saving: refresh restores account-specific localforage drafts; unsaved navigation prompts before leaving. Drafts and active media stay within media-cleanup retention and outside cloud synchronization. Check upload/read failures, unavailable local media, server-save failures and concurrent revision conflicts; these preserve drafts without overwriting server content. A local archival failure after the server save keeps the editor open for retry. Saving a published tutorial updates its public version. Save-and-return and Ctrl/Cmd+S return to `/admin/tutorials` only after the server save and local draft archival succeed, refreshing admin/public lists without an unsaved prompt. Editing is locked during saving; late asynchronous changes must remain dirty in the editor. New tutorial IDs and revisions are journaled in drafts. Retry archival failures in the current editor; after the ID is durably stored, refresh also reopens the same tutorial. Keep the current page open while local writes are failing. Switching accounts or leaving cancels pending editor requests.
+- Shared sidebar: reuse ordinary canvas icon navigation, expansion, resizing, search, thumbnails and themes. Replace the canvas library with administrator tutorial workflows, showing published/unpublished entries, node counts and the active flow. Check search, existing 20-item pagination, new/switch actions, loading, empty states and retry. `GET /api/admin/tutorials?format=workflow` filters before pagination and returns summaries; saving refreshes the list. Canceling an unsaved new/switch action must preserve the current edit, while confirmed navigation retains a recoverable draft. Repeated new creation is disabled while already editing an uncreated flow; metadata, publication and deletion stay in existing tutorial information/management controls.
+- Sidebar operation regression: node search, type filters, list/grid, grouping, focus, preview and selection export target the current flow. Private/public assets and prompts must survive refresh in the independent tutorial draft. Keep ordinary tutorial viewing and verify public workflow click/drop positions, repeated copies, remapped groups/references, example media and one-step undo/redo. Copies must remain independent, trigger no AI request and create no ordinary user canvas. Sidebar save-and-return reuses administrator saves, media uploads, revision conflicts and failure retention; saving locks editing and new/switch actions.
+- Sidebar layout and entry regression: `/canvas/workflow/` redirects to `/canvas/workflow/new`; both slash and no-slash entry routes exclude the Agent panel. Manually check panel toggling/expansion, resizing, both themes, narrow screens and bottom-toolbar clearance, plus ordinary `/canvas/` listing, canvas sidebar, insertion and saving.
+- Editor-route regression: create from the direct workflow button and the ordinary tutorial drawer, carrying metadata into the new canvas; reopen existing IDs and confirm the old admin editor URLs no longer expose an editor. Direct visits and refreshes require a fresh admin-session check; signed-out/ordinary accounts cannot load drafts, and permission-service failures offer retry. New and existing saves return to refreshed tutorial management; ordinary canvases retain their save behavior. Invalid titles, media failures, local write failures and revision conflicts stay in the editor; retry after new-draft archival failure must not duplicate tutorials. Refresh restores account drafts; return, browser-back and other navigation prompt for unsaved changes, supporting cancel or leave-with-draft. Check account-switch isolation, both themes, narrow toolbars/settings and Agent-panel exclusion. These navigation, dialog and visual scenarios remain manual acceptance cases.
+- Canvas insertion: workflow rows use the Workflow icon and offer view/insert/drag. View loads complete details, description, node/connection counts and a theme-aware preview; lists contain summaries only. Clicking centers the copy in the visible canvas; dragging respects the drop point at different zoom levels. Every insertion rebuilds node/edge/child IDs, groups, primary items and prompt-node references, preserves layout, and selects the complete copy. Verify one-step undo/redo, repeated insertion isolation and no automatic AI request.
+- Media and models: download all examples before appending anything, verify size/type/SHA-256, and save fresh browser keys. Check refresh, reference-only media, private-canvas save/cloud synchronization, and independence after the source is changed, withdrawn or deleted. Resolve only a unique name-and-capability model match; missing or ambiguous models show pending channel selection and block generation, while unspecified models inherit user defaults.
+- Failure and authorization: corrupt documents, unknown versions, plugin nodes, invalid edges/groups/primary references, forged or unfinished media must be rejected with reasons. Download failure or cancellation leaves the canvas unchanged. Switch canvas/account during preparation and withdraw a tutorial before insertion; stale list/preview data must not allow a new insert. Ordinary users can read media only through published, enabled tutorials; administrators can read draft media. Verify nested workflow media in backup dependency closure and restore rejection when dependencies are missing.
+- Regression sources: `server/test/tutorial-workflow.test.ts`, `server/test/cloud.test.ts`, `server/test/storage.test.ts`, and `web/tests/tutorial-workflow.test.ts`. Existing cases cover saved-result merging, new/existing draft archival, late changes, local write/delete failures and retry. This update adds workflow filtering before pagination, publication/summary/permission checks, list request cancellation, repeated public-flow copies into tutorial drafts, retained media and republication; none were executed. Database and object-storage integration cases require the existing dedicated test environment. Sidebar operations, save-and-return, draft recovery, canceled switching and the visual cases above remain manual acceptance items, without a passing acceptance claim. TODO lists were reviewed; this capability is tracked here rather than as future development. Real OAuth and two-browser cloud synchronization remain pending their existing prerequisites.
+
+## 资产页布局、共享搜索与画布公共资产
+
+- 画布资产页签导航容器按标注增加 13px 左外边距，仅作用于该侧栏，两类页签及不同侧栏宽度保持一致；待人工确认对齐效果，本次未运行构建或语法检查。TODO 无需调整。
+
+- 画布两类资产切换时保留添加按钮的布局占位，搜索框宽度固定；标签栏统一为固定高度的单行横向滚动，空列表与加载中仍显示“全部”，两类列表统一保留滚动条宽度。切换保留列表挂载、滚动位置与分组状态，公共查询仅在当前标签启用，更新查询时保留已有数据；验收首次加载、反复切换、标签较多与滚动条出现时的尺寸一致性。本次未执行构建、语法检查或浏览器验收；已核对 TODO，无需调整。
+
+- 「我的资产 / 公共资产」标签位于搜索框下、筛选栏上方；两类列表共用顶部搜索框，切换保留关键词与类型，标题和说明随当前标签变化。两类共用“类型：全部、文本、图片、视频”横向可选标签，公共资产不显示分类筛选；点击重置分页，窄屏自动换行。公共接口按 assetKind 先筛选再分页，核对筛选结果、总数与翻页。
+- 两类资产共用我的资产卡片：4:3 封面、标题、来源、类型标记、尺寸/体积/MIME 或文本摘要、标签和小尺寸操作按钮，网格宽度与间距一致。我的资产保留导出、导入与新增，公共资产隐藏这三项操作，保留查看与保存副本；保存成功及加载失败提示同步使用资产名称。
+- 画布资产面板在搜索与添加栏上方提供两类资产切换，共用关键词；两类统一横向标签、图片/视频/文本可折叠分组（含图标与当前页数量）、双列方形圆角缩略图及悬停插入按钮。公共资产移除分类下拉框、卡片标题和底栏文字，标签通过接口筛选后分页，超过一页才显示分页；我的资产保留添加与移除，公共资产仅“保存并插入”。公共资产先重新读取详情、下载媒体到浏览器并创建私人副本，再通过原有节点插入动作放入画布；失败或账号变化时不得插入，公共原件保持不变。
+- 画布资产入口图标与顶部导航统一为 Images，提示词来源图标与画布提示词库入口统一为 MessageSquareText。
+- 验收两类资产的搜索、清空、横向类型标签、分页及切换、卡片样式一致性，画布横向标签筛选、分组展开收起与缩略图一致性，文本/图片/视频保存与插入、刷新后的本地媒体可用性、账号变化和下载失败处理、原有私人资产操作及深浅主题/窄屏。此前已备份本地数据库并重启接口，资产页 HTTP 200，公共图片筛选返回 1 条且无其他类型；本次画布样式调整未运行测试套件、语法检查、构建或浏览器验收。已核对 TODO，无需调整待开发项。
+
+## 配置入口与系统渠道表单
+
+- 顶部与移动导航移除「配置」菜单，右上角配置按钮继续可用；默认打开「系统渠道」，页签顺序为「系统渠道 → 渠道 → 偏好设置 → 本机代理 → WebDAV → 本地存储」，原私人渠道隐藏规则继续生效。
+- 系统渠道的个性化表单直接显示在当前页签，不再通过按钮打开第二层弹窗；检查默认模型、生成参数、本机覆盖标记、单项与全部恢复默认、未登录入口及加载失败提示。
+- 后台开启「隐藏私人渠道」后，访客与普通用户同时隐藏「渠道」「偏好设置」，当前停留在任一页签时切换到「系统渠道」；管理员仍可查看，关闭开关后恢复。系统渠道个性化、WebDAV 与本地存储不受影响。
+- 本轮未运行测试、语法检查、构建或浏览器验收。已检查 TODO，本次没有需移出的待开发项。
+
+## 账号云存储展示与系统渠道默认使用
+
+- 管理员关闭用户云端存储后，账号菜单与个人中心隐藏存储空间卡片，账号菜单同时隐藏云同步入口、头像同步状态点及同步状态提示；重新开启并刷新公共设置后恢复展示，积分与充值入口继续显示。
+- 已登录账号每次启动页面，在渠道与系统配置加载完成后自动使用系统渠道的图片、视频、文本、音频默认模型，并应用本机个性化默认模型。配置按钮显示“已使用”且不可重复点击；手动切换到私人渠道模型后恢复“使用此渠道”，点击可重新使用系统渠道。
+- 手动使用成功仅提示“已使用系统渠道默认模型”，移除后半句私人渠道说明；自动启用不弹出成功提示。系统配置加载失败时不切换默认模型，保留原有错误提示。
+- 待验收关闭与重新开启云存储、账号菜单与个人中心、刷新页面自动使用、个性化默认模型及手动切换后的按钮状态。本轮未运行测试、语法检查、构建或浏览器验收。
+
+## 存储池容量展示
+
+- 添加或编辑存储池时可填写可选总容量，按十进制 GB 输入（1 GB = 10 亿字节）；容量仅用于展示，不参与上传限制或存储池分配。重启 API 自动应用 `006_storage_capacity.sql`，已有池显示“未设置”，不会从池名推断容量。
+- 容量概览同时展示配置的总容量、业务与备份占用的已用合计，以及总容量减去已用合计得到的估算剩余值；有效上传预留计入业务占用。总容量未设置时仍显示已用量；占用超过配置时剩余显示 0 并注明超出量。未登记对象、迁移遗留副本与未完成恢复副本不纳入计算；共享桶或套餐的多个池需要分别分配预算，不代表服务商实时可用容量。
+- 验收新增、编辑、留空清除、小数容量、保存后刷新与重启、并发修订冲突，以及切换允许上传后保留容量。检查零值、负数及超出安全整数范围的字节数被拒绝；深浅主题与窄屏展示待验收。本轮未运行测试、语法检查或构建。
+- 后续排障确认本地非 watch 后端仍使用旧校验规则，拒绝新增 `capacityBytes` 字段。已在忽略目录 `test/runtime/storage-capacity/` 备份数据库、重启项目 API 并自动应用容量字段变更；只读核对数据库列已存在，200 GB 请求参数可通过当前池 schema，后端及前端代理健康检查均返回 200。尚未代用户执行实际保存，浏览器保存及上传验收仍待完成；未执行正式测试套件或构建。
+
+## 授权故障定位与连接地址调整
+
+- 本地 API、前端、PostgreSQL 和 MinIO 已启动，首页及代理健康检查通过。已将本地 LLMRoam 连接和授权页改为 HTTPS，避免 HTTP 301 将令牌 POST 转为 GET 后返回 404；`ACCOUNT_ID_ORIGIN` 保留原 HTTP 来源，防止改变既有账号及云数据归属。
+- 真实授权回调当前仍失败：线上 `/api/status` 已报告 `v8`，最新本地授权日志仍在 `token_exchange` 检测到 `sub`、`authorization_id` 字段不符合协议。已核对本地 `v8` 标签，其令牌实现仍未返回这两个字段；配套凭据复用和响应字段修改仍是 LLMRoam 工作区未提交内容，升级到现有 `v8` 不会包含它们。先将配套修改纳入实际发布源码并构建部署，再验收登录、刷新、账号数据归属及双浏览器同步；不能只凭版本号或服务健康判定授权通过。
+- 回调日志仅记录失败阶段、状态、受控错误码及无效字段路径，不记录授权码、令牌或完整签名地址。前端分别提示拒绝、凭据失效、限流、服务故障、协议不兼容及流程校验失败；未知错误继续使用通用提示。
+- 已补充稳定账号来源、缺失/错误令牌身份字段拒绝登录且保留已有凭据与会话的回归用例。未运行正式测试、语法检查或构建；浏览器新提示、实际授权成功及双浏览器验收仍待验证。
+
+## 云端存储管理与用户云存储开关
+
+本轮已实现下列功能并补充回归用例，未运行测试、语法检查或构建。后续本地启动已备份数据库、应用 `005_storage.sql` 并重启 API；只读核对有一个初始化池，原四条媒体均已关联，浏览器功能验收仍待完成。
+
+- 后台 `/admin/storage` 提供 OSS 池、备份、任务记录三个页签。验收 S3 兼容与阿里云 OSS 原生池的新增、编辑、凭据不回显、连接测试、写入启停、默认池和等权轮询；检查并发分配、固定上传落池及有媒体/备份/任务引用时禁止删除或修改位置。
+- `005_storage.sql` 新增池、策略、任务明细、备份和恢复预览。完整旧 S3 环境配置只在首次初始化导入；原媒体关联此池，重复启动和修改环境变量不得覆盖后台配置。无 S3 配置时仍可启动登录和后台；不完整初始化不会在后续启动自动重试导入，需在后台配置。
+- 系统配置的 `userCloudStorageEnabled` 默认开启。关闭后普通用户与管理员账号的私有同步读写、上传、完成上传及签名读取均返回 `403/CLOUD_STORAGE_DISABLED`，前端显示关闭状态并停止同步，保留本地数据。验证登录、模型直连、WebDAV、管理员公共媒体及存储管理仍可用；旧签名按原有效期失效，刷新设置或重新获得焦点后开启同步可恢复。
+- 迁移先停止源池新上传；默认池需先切换，有效上传预留需完成或过期后手动继续。未完成迁移（含失败）的源池禁止重新开启写入，续行再次核对目标池可写状态。校验源与目标实际大小、SHA-256 后逐项切换索引，ID 保持不变。单独清理源副本时核对在线引用、其他未完成任务及签名等待时间；不扫描 Bucket，不删除未登记对象。
+- 手动备份应包含源池已完成媒体、关联私有记录、公共内容、Logo 引用及跨池媒体依赖；校验全部副本和清单后才允许恢复。备份单独计量，不占用户在线配额；删除备份仅删除备份专属对象，不影响在线媒体。
+- 恢复预览默认只选缺失项；删除墓碑属于冲突，覆盖与 Logo 替换需要明确选择。检查预览后的修订变化、账号归属、媒体身份冲突、配额不足和损坏清单均拒绝覆盖；恢复产生新的私有同步修订，公共内容恢复为未发布。已存在相同内容的媒体也会切换到恢复副本，未选业务记录不覆盖。
+- 全站一个任务、每次传输一个对象；模拟跨实例争抢锁、数据库执行连接中断、服务重启和传输失败，确认保存进度并手动继续，没有额外自动重试。检查任务明细、失败说明和操作审计不包含密钥或完整签名地址。
+- 已补充 `server/test/storage.test.ts`、`server/test/cloud.test.ts` 和 `web/tests/account-session.test.ts`。独立存储集成用例使用可丢弃的 `TEST_STORAGE_DATABASE_URL`；真实 S3 用例另需 `TEST_STORAGE_S3_ENDPOINT`、`TEST_STORAGE_S3_BUCKET`、`TEST_STORAGE_S3_ACCESS_KEY`、`TEST_STORAGE_S3_SECRET_KEY`，可选 `TEST_STORAGE_S3_REGION`。不得与现有云同步用例共用数据库。
+- 仍需真实 S3、阿里云 OSS、S3↔OSS 迁移/备份恢复、深浅主题、移动布局及双浏览器恢复后同步验收；上述用例本轮均未执行。
+
+- System-channel login entry: when signed out, show “Login”; clicking closes configuration and opens the existing LLMRoam login dialog without navigating away. Cancel stays on the current page; only confirming authorization starts OAuth. The header login entry must still open the same dialog, and signed-in channel actions remain available. No build, syntax check or tests were run for this change.
+
+## Session expiry, shared credentials and private-channel visibility
+
+Implementation and regression cases are present; no Infinite Canvas test suite, syntax check or build was run. Apply the matching LLMRoam changes before using the new login flow. The local API was restarted after a fresh database backup in the ignored `test/local-update-oauth/` directory; migration 004 is applied. API and frontend-proxy health checks return 200, public settings exposes the default-off switch, anonymous credential access returns 401, and malformed/state-mismatched callbacks redirect home with the flow cookie cleared. These are readiness probes; production and real-account acceptance remain pending.
+
+Matching LLMRoam authentication regressions passed on SQLite 3.50.4, PostgreSQL 16.15, MySQL 8.0.46 and real Redis 7.4.12, covering consolidation, refresh rotation, storage-error classification and rollback. Commands and results are in that repository's `docs/canvas-oauth.md`. Canvas and real-browser acceptance below remain pending.
+
+- Check authoritative authentication failures trigger one logout even when cloud sync and account requests fail together: save the current canvas, stop sync, clear the local managed key and cookie, then return to the guest home. Preserve canvases, assets, generation history and private keys. Offline startup keeps the last local account; a confirmed missing session clears its managed key before returning to guests. Model-provider 401 responses must not log the site out.
+- Login callback failures must return home with a fixed error category and no code/state in the redirect URL. Check malformed, mismatched, expired and reused flows, invalid grants, 429 and service failures. Clear the flow cookie in every error case; confirmed invalid grants also end the current session, while service failures preserve it. Token diagnostics must contain only grant type, HTTP status and a fixed error code. New callback regression cases are written but unrun.
+- Check 429, network errors, upstream 5xx, invalid OAuth client configuration and public-library 401 responses preserve the site session. A successful refresh followed by a failed account request must retain the rotated credential for the next request. Clearing managed credentials must prevent pending channel initialization from writing an old key back.
+- Migration `004_account_credentials.sql` moves storage to one encrypted credential per account without copying old session secrets. Its first application invalidates old site sessions; repeated application must preserve new sessions. Existing local work is retained and users log in once again.
+- Repeat login, page reload, channel personalization, concurrent initialization and two-browser refresh. LLMRoam must keep one effective access-token record and one dedicated model key per user/application. Successful login consolidates old duplicates while preserving a usable key; other users, applications and manual keys stay independent. A new authorization ID must replace the browser's cached managed key. Ordinary logout affects one browser; explicit credential revocation affects the shared dedicated key.
+- In Admin → Settings, save `hidePrivateChannels` and check revision conflicts/audit. The default is off. When on, guests and ordinary users lose the Providers and Preferences tabs, private-channel editor and URL import; configuration-file imports keep existing channels, credentials and model selections while applying other preferences. Administrators keep access; system-channel personalization and existing private models remain usable. Switching the flag while Providers or Preferences is open selects the system tab. Reload/focus refreshes the public setting.
+- Added/updated cases: `server/test/cloud.test.ts`, `web/tests/account-session.test.ts`, `web/tests/system-channel.test.ts`. Manual browser acceptance, real-account OAuth and two-browser synchronization remain pending.
+
+## System channels and local personal preferences (pending acceptance)
+
+Implementation and regression cases are present. No build, syntax check, or formal test suite was run. Real-account and browser acceptance remains pending. The local API was restarted and applied `003_system_channel.sql`; the singleton is at revision 1 with an empty model directory requiring explicit administrator setup. API/proxy health returned 200 and both new endpoints rejected anonymous access with 401. These readiness probes do not establish functional acceptance. Pre-edit backups are in the local ignored `test/system-channel-implementation/` directory.
+
+- Verify configuration tabs appear in this order: 系统渠道 → 渠道 → 偏好设置 → 本机代理 → WebDAV → 本地存储. Ordinary provider management excludes every `managedAccount` channel. The system tab prompts guests to log in and reuses the existing account channel ID without duplicates; private channels remain editable.
+- Verify `/admin/system-channel-models` reuses upstream/manual model selection and the script editor. `/admin/system-channel` selects exposed models, four matching default models, generation defaults and image/video/text prompts. Removing a model clears its exposure and defaults without choosing a replacement.
+- Verify live administrator permission checks on both admin methods, 409 revision conflicts across the two pages, draft retention and audit records. Authenticated `/api/system-channel` reads must contain only exposed models/defaults and no account credentials.
+- Verify operation/node values win over account-local overrides, which win over server defaults. Untouched fields follow new server defaults. Explicit empty prompts and false switches remain overrides; single/all reset removes them. Preferences use account-scoped localforage and never cloud sync. Private models retain private settings; file exports retain local overrides and exclude managed credentials, and imports keep the current managed channel.
+- Verify exposed/upstream model intersection, administrator-owned capabilities/scripts, refresh on login/settings/personalization/focus, visible refresh errors, last-successful snapshot retention and blocked system usage before any successful snapshot.
+- Inspect actual requests: disabled text streaming uses OpenAI `/responses` with `stream:false` or Gemini `generateContent`; enabled streaming retains the original path. Only eligible OpenAI image calls request `response_format:b64_json` when enabled; gpt-image and Gemini omit it. Scripts receive `params.stream` and `params.returnBase64`. Image/video/text prompts apply without changing input text.
+- Verify canvas, workbenches and plugin calls share effective configuration, node overrides win, and switching to private models restores private parameters. Refreshing pending video tasks waits for configuration/credentials and preserves the original model; unavailable models block rather than reroute recovery.
+- Added cases: `server/test/system-channel.test.ts`, `server/test/cloud.test.ts`, `web/tests/system-channel.test.ts`, and `web/tests/system-channel-requests.test.ts`; none were executed. Browsers still use their locally stored login-specific model key for direct model calls, with permissions enforced upstream.
+
+## Administration and shared content (pending acceptance)
+
+The implementation and regression cases are present. No formal test suites, build, or syntax checks were run. Local API, PostgreSQL, MinIO, and the frontend proxy are running. Service probes verified database tables, health and public-library endpoints, the OAuth redirect with S256 PKCE, anonymous-access protection, and S3 signed upload/download, SHA-256 validation, private-bucket restrictions, and GET/POST/HEAD CORS. MinIO bucket-level CORS initialization returns 501; the existing global CORS setting passed the actual local-origin probes. All seven prompt sources fail when connecting directly to GitHub (`ECONNRESET`); the same URL returns 200 through the local system proxy, which the current dedicated source Agent does not use. Browser automation previously failed while creating an isolated page (`timeoutMs`); UI, real-account OAuth callback, application media flows, and two-browser synchronization remain pending.
+
+- Visit and refresh all ten `/admin/*` routes; `/admin` should open Users. Verify navigation, mobile collapse, both themes, filters, pagination, drawers, and save/error feedback.
+- Reject anonymous and ordinary users at every management endpoint. Recheck the provider role on each administrator request. Disabling a local user must revoke sessions, block login and protected access, and refuse self-disable. Roles and synchronized balances stay read-only; changes must leave an actor/target/summary audit record.
+- Remove prompt sources and scheduling from ordinary settings and configuration files. Seed the existing seven sources on the server without importing browser sources. Verify single/all sync, enable/disable/delete, stable remote IDs, idempotence, manual field overrides, deletion tombstones, remote removal, independent source failures, and concurrent-source locking. The default schedule is 30 minutes, with off/60/360/1440-minute options. Reject private, loopback, metadata, mixed-DNS, and redirect destinations.
+- Two browsers must read the same published library. Backend failure must show a library error while private local canvases and assets remain usable. Verify Markdown/link tutorials, ordering and canvas reading; preview and explicit Skill installation with no same-name overwrite; public text/image/video uploads and independent saved copies, including cover images after refresh and cloud sync.
+- Verify site identity, announcements, per-kind visibility, and server-side media visibility. Default storage is 2 GiB with individual overrides. Lowering it preserves existing data and permits deletion or non-growing writes, while rejecting growth and preserving browser data. Unreferenced original media is not automatically reclaimed.
+- Verify successful, failed, cancelled, and resumed video calls use one account-bound ID, retain unknown usage/cost as unknown, and omit credentials and media base64. Reporting failure must not break generation. Local Agent conversation is excluded; interrupted browser reporting may leave a call running, and these reports are not billing records.
+- Added cases are in `server/test/admin.test.ts`, `server/test/cloud.test.ts`, and `web/tests/ai-call-logging.test.ts`. Database and optional S3 integration cases require dedicated test services; none were executed in this task.
+
+## Other pending checks
+
+- Canvas sidebar translations: in Chinese, verify the project panel shows “画布库”, “创建画布”, and “我的画布”; check project actions, the delete dialog, Tutorial Center, Back, Save, and the saved notification. Switch to English and verify the corresponding labels. No `canvas.sidePanel.*` keys should appear. Browser acceptance remains pending; no build, syntax check, or tests were run for this fix.
+
 - 请求客户端标识：画布后端发送给 LLMRoam 的状态、令牌交换与刷新、账号查询和专属凭据请求统一携带 `User-Agent: InfiniteCanvas`；对应的新审计日志“客户端”应显示 `InfiniteCanvas`。历史日志保留原记录，浏览器直接调用模型 API 的标识保持浏览器行为；本次未执行构建或测试。
 
 - 账号余额缓存：首次打开账号菜单或个人中心后，5 分钟内连续打开、跨页面切换或刷新应复用当前登录会话的服务端缓存，不再同步 LLMRoam 用户信息及换算配置；同时发起的请求只同步一次。缓存从成功获取时计时，命中不延长有效期，满 5 分钟后的下一次访问重新同步。不同登录会话隔离，退出登录清除对应缓存，后端重启后重新获取；云存储用量仍实时读取本地数据库。请求失败不缓存，下一次打开可重新获取。已补充并发、过期、隔离和失败后重试的回归用例，本次未执行构建或测试，浏览器显示待验收。
@@ -13,7 +155,7 @@ description: Implemented changes that still need manual verification
 
 - 积分余额换算：刷新后重新打开账号菜单及个人中心，确认与 LLMRoam 同账号钱包余额一致；原始额度 `76,089,291`、`quota_per_unit=500000`、自定义积分汇率为 `10` 时应显示 `1,521.79`。后台调整显示汇率后，5 分钟缓存过期再打开菜单应按新配置换算；重新登录后的会话余额也应使用相同单位。换算配置不可用且没有有效缓存时应提示加载失败，不应显示原始额度充当积分。已补充后端回归用例，本次未执行构建或测试，真实账号显示仍待验收。
 
-- Canvas side navigation styling: verify the vertical rail keeps its border visible and uses the updated rounded outer frame and 40px rounded icon buttons in both themes.
+- Canvas side navigation styling: compare the left floating rail with the bottom toolbar in both themes. Verify matching 32px text buttons, 18px icons, hover/disabled colors, 12px container corners, themed borders, shadows and backdrop blur. The rail is 56px wide at all viewport widths and remains vertically centered with a left inset. Opening/back navigation, resizing and saving should still work; expanded content panels retain their layout. No build or tests were run; browser acceptance remains pending.
 
 - Canvas project actions: click the three-dot button on a project row and confirm the dark themed menu shows Rename and Delete, with rename and delete actions still working for the current and other projects.
 
@@ -23,7 +165,7 @@ description: Implemented changes that still need manual verification
 
 - LLMRoam HTTP 联调：将 `LLMROAM_URL` 和 `OAUTH_AUTHORIZE_URL` 配置为测试服务的 HTTP 地址，确认后端可启动；数据库可用后验证授权跳转与令牌交换。画布非本机 `PUBLIC_URL` 仍要求 HTTPS。
 
-- Canvas library naming and spacing: verify the side navigation uses the library icon and “画布库” label, and the project panel button reads “创建画布” with visible spacing on all four sides.
+- Canvas library naming and spacing: verify the side navigation uses the library icon and “画布库” label, and the project panel button reads “创建画布” with a 10px margin on all four sides at desktop and narrow widths. Browser acceptance remains pending; no build or tests were run for the margin change.
 
 - Canvas sidebar visual refinement: verify that My Projects and Tutorial Center show right-aligned counts, both groups expand and collapse without losing their counts, the current project uses the canvas icon and active theme, and other projects use folder icons. Switch projects and confirm the sidebar remains mounted while only the canvas area shows its loading state.
 
@@ -46,7 +188,7 @@ The current release needs manual verification in these areas:
 - Local storage usage on HTTP deployments: opening the Local storage settings tab at an HTTP origin without `navigator.storage.estimate` should still show IndexedDB content statistics, display an unavailable quota instead of an error, and keep the canvas data unchanged.
 - Canvas image previews: canvas image nodes, the left element list, the node reference bar, my-assets cards, the asset picker, image workbench result cards and history thumbnails, and the image/video workbench reference strips all render from a preview capped at a 768px long edge, so image-heavy views no longer decode the originals. Previews live locally only: canvas data, asset data, generation history, exported zips, and WebDAV sync must never contain preview content, and previews should be cleaned up when an image is deleted or no longer used. Opening the full-size image, editing, downloading, exporting, and generation references must keep using the original; an image that is already at or under 768px, exists only as a remote URL, or uses a custom cover should fall back to the original.
 - Canvas drag and connection rendering performance: Dragging a single node, a multi-selection, or a whole group should stay responsive, and the drop position after releasing should match the dragged preview. Group highlighting should appear and disappear at the right moment when dragging nodes over a group, releasing should add them to the group, and dragging them out should remove them; dragging a group node itself should not highlight any group. When zoomed or panned so only part of the canvas is visible, every connection crossing the viewport should still render (including ones whose endpoints are both off-screen), connection click selection and the context menu should still work, and the dashed preview while creating a connection should follow the cursor as before.
-- Local proxy: Settings should show a dedicated Local proxy tab between Providers and Preferences, with a switch that is off by default. Turning it on should reveal the `npx @basketikun/canvas-proxy@latest` command (with `--port` appended when a non-default port is configured), a copy action, and an address field defaulting to `http://127.0.0.1:23210` that normalizes a missing scheme and trailing slashes on blur. Test connection should succeed only while the command is running. With the proxy on, fetching model lists, generating images, videos, text (including streamed output), and audio, running custom call scripts, polling video tasks, downloading generated images and videos, and WebDAV connection tests plus sync should all route through the proxy and keep working; turning it off should restore direct requests. The proxy itself should forward request methods, headers, query strings, and bodies unchanged, stream SSE responses without buffering, and keep `data:` and `blob:` URLs untouched.
+- Local proxy: Settings should show a dedicated Local proxy tab between Preferences and WebDAV, with a switch that is off by default. Turning it on should reveal the `npx @basketikun/canvas-proxy@latest` command (with `--port` appended when a non-default port is configured), a copy action, and an address field defaulting to `http://127.0.0.1:23210` that normalizes a missing scheme and trailing slashes on blur. Test connection should succeed only while the command is running. With the proxy on, fetching model lists, generating images, videos, text (including streamed output), and audio, running custom call scripts, polling video tasks, downloading generated images and videos, and WebDAV connection tests plus sync should all route through the proxy and keep working; turning it off should restore direct requests. The proxy itself should forward request methods, headers, query strings, and bodies unchanged, stream SSE responses without buffering, and keep `data:` and `blob:` URLs untouched.
 - Image and video size settings: Image settings should split resolution (`1k` / `2k` / `4k` / auto) from aspect ratio (`1:1`, `2:3`, `3:2`, `4:3`, `3:4`, `16:9`, `9:16`, `21:9`, `9:21`, auto) and fill W/H from that pair. Video settings should keep `480p` / `720p` / `1080p` (plus a custom `p` value) and `1:1` / `3:4` / `4:3` / `16:9` / `9:16` / `21:9` / auto, then fill W/H from that pair. Duration should be a 4–30 second slider with the current value on the right; auto ratio should disable W/H.
 - Built-in video requests: without a custom call script, OpenAI-format channels should send `mode`, `first_frame`/`last_frame` or `image[]`, `generate_audio`, `watermark`, and reference videos/audio like the insertable template, and must not use `input_reference[]`. Gemini-format channels should use `predictLongRunning` with `image`/`lastFrame` or `referenceImages`, and must not report that video is unsupported. Refreshing the page should continue polling a Gemini task.
 - Video generation mode: Video settings should offer First & last frame and General reference. One image is sent as the first frame, two images as first and last frames, and more than two images as general references even if first-and-last-frame mode is selected. Built-in requests and request scripts should use `frames` or `reference`.

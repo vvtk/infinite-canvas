@@ -9,7 +9,7 @@ import type { CanvasAgentSnapshot } from "@/lib/canvas/canvas-agent-ops";
 import { clampVideoSeconds } from "@/lib/media-size";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { useAssetStore } from "@/stores/use-asset-store";
-import { modelOptionLabel, modelOptionName, normalizeModelOptionValue, selectableModelsByCapability, useConfigStore } from "@/stores/use-config-store";
+import { getEffectiveConfig, modelOptionLabel, modelOptionName, normalizeModelOptionValue, selectableModelsByCapability, useConfigStore } from "@/stores/use-config-store";
 import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
 
 // Execute site-level Agent tools in the browser, including canvas lists, workbench generation, prompt search, and asset operations.
@@ -147,7 +147,7 @@ function listCanvasProjects(input: SiteToolInput) {
 }
 
 function getImageConfig() {
-    const { config } = useConfigStore.getState();
+    const config = getEffectiveConfig(useConfigStore.getState().config, "image");
     const model = config.imageModel || config.model;
     return {
         current: { model, modelName: modelOptionName(model), quality: config.quality || "auto", size: config.size || "1:1", count: config.count || "1" },
@@ -163,21 +163,21 @@ function runImageWorkbench(input: SiteToolInput, navigate: NavigateFunction) {
     const configStore = useConfigStore.getState();
     const applied: Record<string, unknown> = {};
     if (typeof input.model === "string" && input.model.trim()) {
-        const value = normalizeModelOptionValue(input.model, configStore.config.channels) || input.model;
-        configStore.updateConfig("imageModel", value);
+        const value = normalizeModelOptionValue(input.model, getEffectiveConfig(configStore.config, "image").channels) || input.model;
+        configStore.updateEffectiveConfig("image", "imageModel", value);
         applied.model = value;
     }
     if (typeof input.quality === "string" && input.quality.trim()) {
-        configStore.updateConfig("quality", input.quality);
+        configStore.updateEffectiveConfig("image", "quality", input.quality);
         applied.quality = input.quality;
     }
     if (typeof input.size === "string" && input.size.trim()) {
-        configStore.updateConfig("size", input.size);
+        configStore.updateEffectiveConfig("image", "size", input.size);
         applied.size = input.size;
     }
     if (input.count != null) {
         const count = String(Math.max(1, Math.min(15, Math.floor(Number(input.count)) || 1)));
-        configStore.updateConfig("count", count);
+        configStore.updateEffectiveConfig("image", "count", count);
         applied.count = count;
     }
     const prompt = typeof input.prompt === "string" ? input.prompt : undefined;
@@ -188,7 +188,7 @@ function runImageWorkbench(input: SiteToolInput, navigate: NavigateFunction) {
 }
 
 function getVideoConfig() {
-    const { config } = useConfigStore.getState();
+    const config = getEffectiveConfig(useConfigStore.getState().config, "video");
     const model = config.videoModel || config.model;
     return {
         current: {
@@ -216,33 +216,33 @@ function runVideoWorkbench(input: SiteToolInput, navigate: NavigateFunction) {
     const configStore = useConfigStore.getState();
     const applied: Record<string, unknown> = {};
     if (typeof input.model === "string" && input.model.trim()) {
-        const value = normalizeModelOptionValue(input.model, configStore.config.channels) || input.model;
-        configStore.updateConfig("videoModel", value);
+        const value = normalizeModelOptionValue(input.model, getEffectiveConfig(configStore.config, "video").channels) || input.model;
+        configStore.updateEffectiveConfig("video", "videoModel", value);
         applied.model = value;
     }
     if (typeof input.size === "string" && input.size.trim()) {
-        configStore.updateConfig("size", input.size);
+        configStore.updateEffectiveConfig("video", "size", input.size);
         applied.size = input.size;
     }
     if (input.seconds != null && String(input.seconds).trim()) {
         const seconds = clampVideoSeconds(String(input.seconds));
-        configStore.updateConfig("videoSeconds", seconds);
+        configStore.updateEffectiveConfig("video", "videoSeconds", seconds);
         applied.seconds = seconds;
     }
     if (typeof input.resolution === "string" && input.resolution.trim()) {
-        configStore.updateConfig("vquality", input.resolution);
+        configStore.updateEffectiveConfig("video", "vquality", input.resolution);
         applied.resolution = input.resolution;
     }
     if (typeof input.generateAudio === "boolean") {
-        configStore.updateConfig("videoGenerateAudio", String(input.generateAudio));
+        configStore.updateEffectiveConfig("video", "videoGenerateAudio", String(input.generateAudio));
         applied.generateAudio = input.generateAudio;
     }
     if (typeof input.watermark === "boolean") {
-        configStore.updateConfig("videoWatermark", String(input.watermark));
+        configStore.updateEffectiveConfig("video", "videoWatermark", String(input.watermark));
         applied.watermark = input.watermark;
     }
     if (input.mode === "frames" || input.mode === "reference") {
-        configStore.updateConfig("videoMode", input.mode);
+        configStore.updateEffectiveConfig("video", "videoMode", input.mode);
         applied.mode = input.mode;
     }
     const prompt = typeof input.prompt === "string" ? input.prompt : undefined;

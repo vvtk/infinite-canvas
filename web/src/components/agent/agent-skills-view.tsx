@@ -10,6 +10,8 @@ import { useAgentSkillStore } from "@/stores/use-agent-skill-store";
 import { useAgentStore, type AgentChatItem } from "@/stores/use-agent-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 
+import { PublicSkills } from "./public-skills";
+
 type ScopeFilter = "all" | AgentSkillScope;
 type SkillDraftSource = "conversation" | "canvas";
 type SkillEditor = { mode: "create"; values?: SkillFormValues } | { mode: "edit"; detail: AgentSkillDetail };
@@ -49,6 +51,7 @@ export function AgentSkillsView({ clientId }: { clientId: string }) {
     const [advancedOpen, setAdvancedOpen] = useState(false);
     const [createMenuOpen, setCreateMenuOpen] = useState(false);
     const [busySkill, setBusySkill] = useState("");
+    const [publicInstalling, setPublicInstalling] = useState(false);
     const [errorsOpen, setErrorsOpen] = useState(false);
     const confirmRef = useRef<{ destroy: () => void } | null>(null);
     const [form] = Form.useForm<SkillFormValues>();
@@ -90,7 +93,7 @@ export function AgentSkillsView({ clientId }: { clientId: string }) {
     };
     const generateDraft = async (source: SkillDraftSource) => {
         const agent = useAgentStore.getState();
-        if (agent.sending || agent.waiting) return message.warning(t("agent.skillManager.codexBusy"));
+        if (publicInstalling || agent.sending || agent.waiting) return message.warning(t("agent.skillManager.codexBusy"));
         if (source === "conversation" && !hasSettledConversation(agent.messages, agent.activeThreadId)) return message.warning(t("agent.skillManager.noConversation"));
         if (source === "canvas" && !agent.canvasContext) return message.warning(t("agent.skillManager.noCanvas"));
         if (!clientId) return message.warning(t("agent.skillManager.connecting"));
@@ -120,7 +123,7 @@ export function AgentSkillsView({ clientId }: { clientId: string }) {
         }
     };
     const openEdit = async (skill: AgentSkillSummary) => {
-        if (!skill.managed || busySkill || useAgentSkillStore.getState().generatingSource) return;
+        if (publicInstalling || !skill.managed || busySkill || useAgentSkillStore.getState().generatingSource) return;
         const connectionRevision = useAgentSkillStore.getState().connectionRevision;
         setBusySkill(skill.path);
         try {
@@ -260,6 +263,7 @@ export function AgentSkillsView({ clientId }: { clientId: string }) {
             },
         ],
         onClick: ({ key }) => {
+            if (publicInstalling) return;
             if (key === "manual") {
                 setDraft(null);
                 setEditor({ mode: "create" });
@@ -280,8 +284,8 @@ export function AgentSkillsView({ clientId }: { clientId: string }) {
                         <Tooltip title={t("agent.skillManager.reload")}>
                             <Button type="text" shape="circle" className="!h-8 !w-8 !min-w-8" aria-label={t("agent.skillManager.reloadSkill")} disabled={!connected || loading} icon={<RefreshCw className={`size-4 ${loading ? "animate-spin" : ""}`} />} onClick={() => void refresh()} />
                         </Tooltip>
-                        <Dropdown trigger={["click"]} placement="bottomRight" open={createMenuOpen} onOpenChange={setCreateMenuOpen} disabled={!connected || !clientId || Boolean(generatingSource)} menu={createMenu}>
-                            <Button type="text" className="!h-8 !px-2" aria-haspopup="menu" aria-expanded={createMenuOpen} disabled={!connected || !clientId} loading={Boolean(generatingSource)} icon={<Plus className="size-4" />}>
+                        <Dropdown trigger={["click"]} placement="bottomRight" open={createMenuOpen} onOpenChange={setCreateMenuOpen} disabled={publicInstalling || !connected || !clientId || Boolean(generatingSource)} menu={createMenu}>
+                            <Button type="text" className="!h-8 !px-2" aria-haspopup="menu" aria-expanded={createMenuOpen} disabled={publicInstalling || !connected || !clientId} loading={Boolean(generatingSource)} icon={<Plus className="size-4" />}>
                                 {t("agent.skillManager.createSkill")} <ChevronDown className="size-3.5 opacity-60" />
                             </Button>
                         </Dropdown>
@@ -329,15 +333,15 @@ export function AgentSkillsView({ clientId }: { clientId: string }) {
                                     </div>
                                     <div className="mt-2 flex items-center justify-between gap-2 pl-7">
                                         <label className="inline-flex items-center gap-2 text-xs" style={{ color: theme.node.muted }}>
-                                            <Switch size="small" checked={skill.enabled} loading={busy} disabled={!connected || Boolean(busySkill) || Boolean(generatingSource)} onChange={(enabled) => void toggleEnabled(skill, enabled)} />
+                                            <Switch size="small" checked={skill.enabled} loading={busy} disabled={publicInstalling || !connected || Boolean(busySkill) || Boolean(generatingSource)} onChange={(enabled) => void toggleEnabled(skill, enabled)} />
                                             {t(skill.enabled ? "agent.skillManager.enabled" : "agent.skillManager.disabled")}
                                         </label>
                                         <div className="flex items-center gap-0.5">
                                             <Button type="text" size="small" disabled={!connected || !skill.enabled || Boolean(busySkill)} icon={selected ? <Check className="size-3.5" /> : <Sparkles className="size-3.5" />} onClick={() => useSkill(skill)}>{t(selected ? "agent.skillManager.selected" : "agent.skillManager.use")}</Button>
                                             {skill.managed ? (
                                                 <>
-                                                    <Tooltip title={t("common.edit")}><Button type="text" shape="circle" size="small" aria-label={t("agent.skillManager.editNamed", { name: skill.interface?.displayName || skill.name })} disabled={!connected || Boolean(busySkill) || Boolean(generatingSource)} icon={<FilePenLine className="size-3.5" />} onClick={() => void openEdit(skill)} /></Tooltip>
-                                                    <Tooltip title={t("common.delete")}><Button danger type="text" shape="circle" size="small" aria-label={t("agent.skillManager.deleteNamed", { name: skill.interface?.displayName || skill.name })} disabled={!connected || Boolean(busySkill) || Boolean(generatingSource)} icon={<Trash2 className="size-3.5" />} onClick={() => confirmDelete(skill)} /></Tooltip>
+                                                    <Tooltip title={t("common.edit")}><Button type="text" shape="circle" size="small" aria-label={t("agent.skillManager.editNamed", { name: skill.interface?.displayName || skill.name })} disabled={publicInstalling || !connected || Boolean(busySkill) || Boolean(generatingSource)} icon={<FilePenLine className="size-3.5" />} onClick={() => void openEdit(skill)} /></Tooltip>
+                                                    <Tooltip title={t("common.delete")}><Button danger type="text" shape="circle" size="small" aria-label={t("agent.skillManager.deleteNamed", { name: skill.interface?.displayName || skill.name })} disabled={publicInstalling || !connected || Boolean(busySkill) || Boolean(generatingSource)} icon={<Trash2 className="size-3.5" />} onClick={() => confirmDelete(skill)} /></Tooltip>
                                                 </>
                                             ) : null}
                                         </div>
@@ -353,6 +357,7 @@ export function AgentSkillsView({ clientId }: { clientId: string }) {
                         <div className="mt-1 text-xs" style={{ color: theme.node.muted }}>{t(!connected ? "agent.skillManager.connectDescription" : skills.length ? "agent.skillManager.tryAnotherFilter" : "agent.skillManager.createOrInstall")}</div>
                     </div>
                 )}
+                <PublicSkills blocked={Boolean(editor) || saving || Boolean(busySkill) || createMenuOpen} onBusyChange={setPublicInstalling}/>
             </div>
 
             <Modal title={t("agent.skillManager.loadErrors", { count: errors.length })} open={errorsOpen} footer={null} width={720} onCancel={() => setErrorsOpen(false)}>

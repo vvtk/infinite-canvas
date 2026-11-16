@@ -3,10 +3,11 @@ import axios from "axios";
 import i18n from "@/i18n";
 import { audioMimeType, normalizeAudioFormatValue, normalizeAudioSpeedValue, normalizeAudioVoiceValue } from "@/lib/audio-generation";
 import { uploadMediaFile, type UploadedFile } from "@/services/file-storage";
-import { buildApiUrl, resolveModelRequestConfig, resolveModelScript, withLocalProxy, type AiConfig } from "@/stores/use-config-store";
+import { buildApiUrl, getEffectiveConfig, resolveModelRequestConfig, resolveModelScript, withLocalProxy, type AiConfig } from "@/stores/use-config-store";
 import { runModelPlugin } from "./model-plugin";
 
-type RequestOptions = { signal?: AbortSignal };
+import {loggedCall,type UsageObserver} from "./ai-events";
+type RequestOptions = { signal?: AbortSignal;onUsage?:UsageObserver };
 const apiText = (key: string, options?: Record<string, unknown>) => i18n.t(`apiErrors.${key}`, options);
 
 function aiApiUrl(config: AiConfig, path: string) {
@@ -20,11 +21,16 @@ function aiHeaders(config: AiConfig) {
     };
 }
 
-export async function requestAudioGeneration(config: AiConfig, prompt: string, options?: RequestOptions): Promise<Blob> {
+export async function requestAudioGeneration(config:AiConfig,prompt:string,options?:RequestOptions):Promise<Blob>{
+    config = getEffectiveConfig(config, "audio", config.model || config.audioModel);
+    return loggedCall(config,"audio",prompt,0,options?.signal,onUsage=>requestAudioGenerationInternal(config,prompt,{...options,onUsage}),()=>({count:1}));
+}
+async function requestAudioGenerationInternal(config: AiConfig, prompt: string, options?: RequestOptions): Promise<Blob> {
     const requestConfig = resolveModelRequestConfig(config, config.model || config.audioModel);
     const model = requestConfig.model.trim();
-    const format = normalizeAudioFormatValue(config.audioFormat);
+    const format = normalizeAudioFormatValue(requestConfig.audioFormat);
     const script = resolveModelScript(config, config.model || config.audioModel);
+    config = requestConfig;
     if (script) {
         if (!model) throw new Error(apiText("audioModelRequired"));
         if (!requestConfig.baseUrl.trim()) throw new Error(apiText("baseUrlRequired"));
@@ -37,6 +43,7 @@ export async function requestAudioGeneration(config: AiConfig, prompt: string, o
                 prompt,
                 params: { voice: normalizeAudioVoiceValue(config.audioVoice), format, speed: normalizeAudioSpeedValue(config.audioSpeed), instructions: config.audioInstructions.trim() },
                 signal: options?.signal,
+                onUsage:options?.onUsage,
             });
             return await audioPluginBlob(result, format);
         } catch (error) {

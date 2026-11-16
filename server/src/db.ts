@@ -1,9 +1,12 @@
 import { Pool, type PoolClient } from "pg";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 
 export const createPool = (connectionString: string) => new Pool({ connectionString });
 export async function migrate(pool: Pool) {
-    await pool.query(await readFile(new URL("../migrations/001_cloud.sql", import.meta.url), "utf8"));
+    const directory = new URL("../migrations/", import.meta.url);
+    for (const file of (await readdir(directory)).filter((name) => name.endsWith(".sql")).sort()) {
+        await pool.query(await readFile(new URL(file, directory), "utf8"));
+    }
 }
 export async function transaction<T>(pool: Pool, work: (db: PoolClient) => Promise<T>) {
     const db = await pool.connect();

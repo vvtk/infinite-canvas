@@ -1,18 +1,16 @@
 export const audioVoiceOptions = [
-    { value: "alloy", label: "Alloy" },
-    { value: "ash", label: "Ash" },
-    { value: "ballad", label: "Ballad" },
-    { value: "coral", label: "Coral" },
-    { value: "echo", label: "Echo" },
-    { value: "fable", label: "Fable" },
-    { value: "nova", label: "Nova" },
-    { value: "onyx", label: "Onyx" },
-    { value: "sage", label: "Sage" },
-    { value: "shimmer", label: "Shimmer" },
-    { value: "verse", label: "Verse" },
-    { value: "marin", label: "Marin" },
-    { value: "cedar", label: "Cedar" },
+    { value: "longanhuan_v3.1", label: "longanhuan_v3.1" },
+    { value: "longanlingxin_v3.1", label: "longanlingxin_v3.1" },
+    { value: "xunanchuan_v3.1", label: "xunanchuan_v3.1" },
+    { value: "longanfengyue_v3.1", label: "longanfengyue_v3.1" },
 ];
+
+const legacyAudioVoiceMap: Record<string, string> = {
+    alloy: "longanhuan_v3.1",
+    ash: "longanlingxin_v3.1",
+    ballad: "xunanchuan_v3.1",
+    coral: "longanfengyue_v3.1",
+};
 
 export const audioFormatOptions = [
     { value: "mp3", label: "MP3" },
@@ -24,7 +22,9 @@ export const audioFormatOptions = [
 ];
 
 export function normalizeAudioVoiceValue(value: string) {
-    return audioVoiceOptions.some((item) => item.value === value) ? value : "alloy";
+    const requested = String(value || "").trim();
+    const mapped = legacyAudioVoiceMap[requested.toLowerCase()] || requested;
+    return audioVoiceOptions.some((item) => item.value === mapped) ? mapped : audioVoiceOptions[0].value;
 }
 
 export function normalizeAudioFormatValue(value: string) {

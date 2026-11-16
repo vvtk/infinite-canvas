@@ -4,12 +4,14 @@ export const CANVAS_SIDE_PANEL_MOTION_MS = 500;
 export const CANVAS_SIDE_PANEL_MIN_WIDTH = 220;
 export const CANVAS_SIDE_PANEL_MAX_WIDTH = 480;
 export const CANVAS_SIDE_PANEL_DEFAULT_WIDTH = 280;
+export const CANVAS_SIDE_PANEL_NAV_WIDTH = 56;
 
 const WIDTH_KEY = "canvas-side-panel-width";
 const OPEN_KEY = "canvas-side-panel-open";
 const NODE_VIEW_KEY = "canvas-side-panel-node-view";
 
 export type CanvasNodeViewMode = "list" | "grid";
+export type CanvasSidePanelTab = "projects" | "tutorials" | "canvas" | "assets" | "prompts";
 
 function initialWidth() {
     if (typeof window === "undefined") return CANVAS_SIDE_PANEL_DEFAULT_WIDTH;
@@ -29,6 +31,8 @@ function initialNodeView(): CanvasNodeViewMode {
 }
 
 type CanvasSidePanelStore = {
+    tab: CanvasSidePanelTab | null;
+    setTab: (tab: CanvasSidePanelTab | null) => void;
     width: number;
     panelOpen: boolean;
     panelMounted: boolean;
@@ -42,6 +46,8 @@ type CanvasSidePanelStore = {
 };
 
 export const useCanvasSidePanelStore = create<CanvasSidePanelStore>((set, get) => ({
+    tab: null,
+    setTab: (tab) => set({ tab }),
     width: initialWidth(),
     panelOpen: initialOpen(),
     panelMounted: initialOpen(),

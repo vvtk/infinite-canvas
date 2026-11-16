@@ -1,16 +1,18 @@
 import { Copy, Download, PencilLine, Search, Trash2, Upload } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { App, Button, Card, Drawer, Empty, Form, Image, Input, Modal, Pagination, Select, Space, Tag, Typography } from "antd";
+import { App, Button, Drawer, Empty, Form, Image, Input, Modal, Pagination, Select, Space, Tag, Tabs, Typography } from "antd";
 import { saveAs } from "file-saver";
 import { useTranslation } from "react-i18next";
 
 import { useCopyText } from "@/hooks/use-copy-text";
 import { formatBytes, readFileAsDataUrl } from "@/lib/image-utils";
+import { cn } from "@/lib/utils";
 import { getMediaBlob } from "@/services/file-storage";
 import { getImageBlob, getImagePreviewRevision, subscribeImagePreviews, uploadImage } from "@/services/image-storage";
-import { cn } from "@/lib/utils";
 import { assetCoverUrl, useAssetStore, type Asset, type AssetKind, type ImageAsset } from "@/stores/use-asset-store";
 import { exportAssets, readAssetPackage } from "./asset-transfer";
+import { PublicAssets } from "./public-assets";
+import { AssetCard } from "./asset-card";
 
 type AssetFormValues = {
     kind: AssetKind;
@@ -39,6 +41,8 @@ export default function AssetsPage() {
     const updateAsset = useAssetStore((state) => state.updateAsset);
     const removeAsset = useAssetStore((state) => state.removeAsset);
     const [keyword, setKeyword] = useState("");
+    const [tab, setTab] = useState("mine");
+    const isPublic = tab === "public";
     const [kindFilter, setKindFilter] = useState<AssetKind | "all">("all");
     const [page, setPage] = useState(1);
     const [pageSize, setPageSize] = useState(10);
@@ -105,7 +109,7 @@ export default function AssetsPage() {
             tags: values.tags || [],
             source: values.source?.trim(),
             note: values.note?.trim(),
-            metadata: editingAsset?.metadata || { source: "manual" },
+            metadata: { ...(editingAsset?.metadata || { source: "manual" }), ...(editingAsset && values.coverUrl?.trim() !== editingAsset.coverUrl ? { cover: undefined } : {}) },
         };
 
         if (values.kind === "text") {
@@ -198,8 +202,8 @@ export default function AssetsPage() {
             <main className="min-h-0 flex-1 overflow-y-auto bg-[radial-gradient(#e5e7eb_1px,transparent_1px)] px-6 py-8 [background-size:16px_16px] dark:bg-[radial-gradient(rgba(245,245,244,.14)_1px,transparent_1px)]">
                 <div className="pb-8">
                     <div className="mx-auto max-w-5xl text-center">
-                        <h1 className="text-4xl font-semibold tracking-tight text-stone-950 dark:text-stone-100">{t("assets.title")}</h1>
-                        <p className="mt-3 text-sm text-stone-500 dark:text-stone-400">{t("assets.description")}</p>
+                        <h1 className="text-4xl font-semibold tracking-tight text-stone-950 dark:text-stone-100">{t(isPublic ? "assets.publicTitle" : "assets.title")}</h1>
+                        <p className="mt-3 text-sm text-stone-500 dark:text-stone-400">{t(isPublic ? "assets.publicDescription" : "assets.description")}</p>
                     </div>
 
                     <div className="mx-auto mt-8 w-full max-w-2xl">
@@ -222,26 +226,15 @@ export default function AssetsPage() {
                     </div>
 
                     <div className="mx-auto mt-6 grid max-w-6xl gap-3 text-left">
+                        <Tabs activeKey={tab} onChange={setTab} items={[{ key: "mine", label: t("assets.title") }, { key: "public", label: t("assets.publicTitle") }]} />
                         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                             <div className="grid gap-2 sm:grid-cols-[56px_minmax(0,1fr)] sm:items-center">
                                 <div className="text-xs font-medium text-stone-500 dark:text-stone-400">{t("assets.type")}</div>
                                 <div className="flex flex-wrap gap-2">
-                                    {kindOptions.map((option) => (
-                                        <Tag.CheckableTag
-                                            key={option}
-                                            checked={kindFilter === option}
-                                            className={cn("prompt-filter-tag", kindFilter === option && "is-active")}
-                                            onChange={() => {
-                                                setPage(1);
-                                                setKindFilter(option);
-                                            }}
-                                        >
-                                            {option === "all" ? t("common.all") : t(`assets.kinds.${option}`)}
-                                        </Tag.CheckableTag>
-                                    ))}
+                                    {kindOptions.map(option => <Tag.CheckableTag key={option} checked={kindFilter === option} className={cn("prompt-filter-tag", kindFilter === option && "is-active")} onChange={() => { setKindFilter(option); setPage(1); }}>{option === "all" ? t("common.all") : t(`assets.kinds.${option}`)}</Tag.CheckableTag>)}
                                 </div>
                             </div>
-                            <div className="flex flex-wrap gap-4">
+                            {!isPublic ? <div className="flex flex-wrap gap-4">
                                 <button
                                     type="button"
                                     className="cursor-pointer text-sm font-medium text-stone-700 underline-offset-4 hover:underline focus-visible:outline-none focus-visible:underline dark:text-stone-300"
@@ -263,15 +256,15 @@ export default function AssetsPage() {
                                 >
                                     {t("assets.add")}
                                 </button>
-                            </div>
+                            </div> : null}
                         </div>
                     </div>
                 </div>
 
-                <div className="mx-auto flex max-w-7xl flex-col gap-5">
+                {isPublic ? <div className="mx-auto max-w-7xl"><PublicAssets keyword={keyword} kindFilter={kindFilter} /></div> : <div className="mx-auto flex max-w-7xl flex-col gap-5">
                     <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                         {visibleAssets.map((asset) => (
-                            <AssetCard key={asset.id} asset={asset} onOpen={() => setPreviewAsset(asset)} onEdit={() => openEdit(asset)} onCopy={copyAssetText} onDownload={downloadImage} onDelete={() => setDeletingAsset(asset)} />
+                            <PrivateAssetCard key={asset.id} asset={asset} onOpen={() => setPreviewAsset(asset)} onEdit={() => openEdit(asset)} onCopy={copyAssetText} onDownload={downloadImage} onDelete={() => setDeletingAsset(asset)} />
                         ))}
                     </div>
 
@@ -290,7 +283,7 @@ export default function AssetsPage() {
                             }}
                         />
                     </div>
-                </div>
+                </div>}
             </main>
 
             <Modal title={editingAsset ? t("assets.edit") : t("assets.add")} open={isAssetOpen} width={980} onCancel={() => setIsAssetOpen(false)} onOk={() => void saveAsset()} okText={t("common.save")} cancelText={t("common.cancel")} destroyOnHidden>
@@ -410,54 +403,11 @@ export default function AssetsPage() {
     );
 }
 
-function AssetCard({ asset, onOpen, onEdit, onCopy, onDownload, onDelete }: { asset: Asset; onOpen: () => void; onEdit: () => void; onCopy: (asset: Asset) => void; onDownload: (asset: Asset) => void; onDelete: () => void }) {
+function PrivateAssetCard({ asset, onOpen, onEdit, onCopy, onDownload, onDelete }: { asset: Asset; onOpen: () => void; onEdit: () => void; onCopy: (asset: Asset) => void; onDownload: (asset: Asset) => void; onDelete: () => void }) {
     const { t } = useTranslation();
     useSyncExternalStore(subscribeImagePreviews, getImagePreviewRevision);
-    const cover = assetCoverUrl(asset);
-    const summary = assetSummary(asset);
     return (
-        <Card
-            hoverable
-            className="overflow-hidden"
-            styles={{ body: { padding: 0 } }}
-            cover={
-                <button type="button" className="block w-full text-left" onClick={onOpen}>
-                    {cover ? (
-                        <img src={cover} alt={asset.title} className="aspect-[4/3] w-full object-cover" />
-                    ) : (
-                        <div className="flex aspect-[4/3] items-center justify-center bg-stone-100 p-5 text-center text-sm leading-6 text-stone-600 dark:bg-stone-900 dark:text-stone-300">{asset.kind === "text" ? asset.data.content : t("assets.noCover")}</div>
-                    )}
-                </button>
-            }
-        >
-            <button type="button" className="block w-full text-left" onClick={onOpen}>
-                <div className="p-4">
-                    <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                            <h2 className="line-clamp-1 text-sm font-semibold text-stone-950 dark:text-stone-100">{asset.title}</h2>
-                            <Typography.Text type="secondary" className="mt-1 block text-xs">
-                                {asset.source || t("assets.unknownSource")}
-                            </Typography.Text>
-                        </div>
-                        <Tag className="m-0 shrink-0 text-[11px]">{t(`assets.kinds.${asset.kind}`)}</Tag>
-                    </div>
-                    <Typography.Paragraph type="secondary" ellipsis={{ rows: 3 }} className="!mb-0 !mt-2 !text-xs !leading-5">
-                        {summary}
-                    </Typography.Paragraph>
-                    <div className="mt-3 flex flex-wrap gap-1.5">
-                        {(asset.tags || []).slice(0, 3).map((tag) => (
-                            <Tag key={tag} className="m-0 text-[11px]">
-                                {tag}
-                            </Tag>
-                        ))}
-                        {!asset.tags?.length ? <Tag className="m-0 text-[11px]">{t("assets.noTags")}</Tag> : null}
-                    </div>
-                </div>
-            </button>
-            <div className="flex items-center gap-2 px-4 pb-4">
-                <Button size="small" onClick={onOpen}>
-                    {t("common.view")}
-                </Button>
+        <AssetCard asset={{ ...asset, cover: assetCoverUrl(asset), summary: assetSummary(asset) }} onOpen={onOpen}>
                 {asset.kind !== "video" ? (
                     <Button size="small" icon={<PencilLine className="size-3.5" />} onClick={onEdit}>
                         {t("common.edit")}
@@ -476,8 +426,7 @@ function AssetCard({ asset, onOpen, onEdit, onCopy, onDownload, onDelete }: { as
                 <Button size="small" danger icon={<Trash2 className="size-3.5" />} onClick={onDelete}>
                     {t("common.delete")}
                 </Button>
-            </div>
-        </Card>
+        </AssetCard>
     );
 }
 
