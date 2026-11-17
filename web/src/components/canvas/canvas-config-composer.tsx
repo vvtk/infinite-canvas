@@ -123,7 +123,7 @@ export function CanvasConfigComposer({ nodeId, nodes, value, inputs, connectedNo
             onPointerDown={stopCanvasInteraction}
             onWheel={(event) => event.stopPropagation()}
         >
-            <div className="mb-2 flex items-center justify-between gap-2">
+            <div data-canvas-panel-heading className="mb-2 flex items-center justify-between gap-2">
                 <div className="flex min-w-0 items-baseline gap-2">
                     <div className="shrink-0 text-xs font-semibold">{t("canvas.composer.title")}</div>
                     <div className="truncate text-[11px] opacity-55">{t("canvas.composer.description")}</div>

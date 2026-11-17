@@ -83,7 +83,7 @@ async function ensureRemoteMedia(ids: string[], signal: AbortSignal) {
     for (const id of ids) {
         const remote = await cloudRequest<{ storageKey: string; mimeType: string; url: string }>(`/media/${id}/url`, undefined, "GET", signal);
         if (!(await mediaBlob(remote.storageKey))) {
-            const response = await fetch(remote.url, { signal });
+            const response = await fetch(`/api/media/${encodeURIComponent(id)}/content`, { credentials: "same-origin", cache: "no-store", signal });
             if (!response.ok) throw new Error("原始媒体下载失败，请重试同步");
             const blob = await response.blob();
             signal.throwIfAborted();

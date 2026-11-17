@@ -16,6 +16,9 @@ import { getDataUrlByteSize, readImageMeta } from "@/lib/image-utils";
 import { imageReferenceLabel } from "@/lib/image-reference-prompt";
 import { canvasThemes, type CanvasBackgroundMode } from "@/lib/canvas-theme";
 import { matchesCanvasShortcut } from "@/lib/canvas/keyboard-shortcuts";
+import { getAdjacentImageId } from "@/lib/canvas/canvas-image-navigation";
+import { applyImagePrimary, createCanvasImageCopy, getCanvasImageNode, type CanvasImageTarget } from "@/lib/canvas/canvas-image-target";
+import { isImeComposing } from "@/lib/keyboard-event";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { cropDataUrl, splitDataUrl, upscaleDataUrl } from "@/lib/canvas/canvas-image-data";
@@ -38,6 +41,7 @@ import { CanvasSelectionToolbar } from "@/components/canvas/canvas-selection-too
 import { InfiniteCanvas } from "@/components/canvas/infinite-canvas";
 import { Minimap } from "@/components/canvas/canvas-mini-map";
 import { CanvasNode } from "@/components/canvas/canvas-node";
+import { CanvasImageNavigation } from "@/components/canvas/canvas-image-navigation";
 import { CanvasNodePromptPanel, type CanvasNodeGenerationMode } from "@/components/canvas/canvas-node-prompt-panel";
 import { CanvasToolbar } from "@/components/canvas/canvas-toolbar";
 import { AssetPickerModal, type InsertAssetPayload } from "@/components/canvas/asset-picker-modal";
@@ -126,6 +130,13 @@ type CanvasGenerationRequest = {
     controller: AbortController;
 };
 
+type ImageToolSource = {
+    tool: "crop" | "maskEdit" | "split" | "upscale" | "superResolve" | "angle";
+    node: CanvasNodeData;
+    imageId?: string;
+    secondary: boolean;
+};
+
 const VIDEO_NODE_MAX_WIDTH = 420;
 const VIDEO_NODE_MAX_HEIGHT = 420;
 // Stable empty reference array prevents `... || []` from invalidating CanvasNode's React.memo on every render.
@@ -170,15 +181,15 @@ export type CanvasEditorDocument = {
     onSave: (snapshot: CanvasEditorSnapshot) => Promise<void>;
 };
 
-function measureFocusFrame(container: HTMLDivElement | null, nodeId: string) {
+function measureFocusFrame(container: HTMLDivElement | null, nodeId: string, scale: number) {
     if (!container) return {};
     const nodeRect = container.querySelector<HTMLElement>(`[data-node-id="${nodeId}"]`)?.getBoundingClientRect();
     const panelRect = container.querySelector<HTMLElement>(`[data-node-id="${nodeId}"] [data-node-panel]`)?.getBoundingClientRect();
     const toolbarRect = document.querySelector<HTMLElement>(`[data-node-toolbar="${nodeId}"]`)?.getBoundingClientRect();
     const dockRect = document.querySelector<HTMLElement>("[data-canvas-bottom-toolbar]")?.getBoundingClientRect();
-    const below = nodeRect && panelRect ? panelRect.bottom - nodeRect.bottom : 0;
-    const above = nodeRect && toolbarRect ? nodeRect.top - toolbarRect.top : 0;
-    return { above, below, bottomInset: dockRect && below > 0 ? Math.max(0, container.getBoundingClientRect().bottom - dockRect.top) : 0 };
+    const panel = nodeRect && panelRect ? { width: panelRect.width / scale, height: (panelRect.bottom - nodeRect.bottom) / scale } : undefined;
+    const toolbar = nodeRect && toolbarRect ? { width: toolbarRect.width / scale, height: (nodeRect.top - toolbarRect.top) / scale } : undefined;
+    return { toolbar, panel, bottomInset: dockRect && panel ? Math.max(0, container.getBoundingClientRect().bottom - dockRect.top) : 0 };
 }
 
 export function CanvasEditor({ document }: { document?: CanvasEditorDocument }) {
@@ -234,6 +245,7 @@ export function CanvasEditor({ document }: { document?: CanvasEditorDocument }) 
     });
 
     const config = useConfigStore((state) => state.config);
+    const alwaysShowPanels = useConfigStore((state) => state.canvasPreferences.alwaysShowPanels);
     const shortcutBindings = useCanvasShortcutStore((state) => state.bindings);
     const effectiveConfig = useEffectiveConfig();
     const isAiConfigReady = useConfigStore((state) => state.isAiConfigReady);
@@ -275,16 +287,12 @@ export function CanvasEditor({ document }: { document?: CanvasEditorDocument }) 
     const [assetPickerOpen, setAssetPickerOpen] = useState(false);
     const [projectLoaded, setProjectLoaded] = useState(false);
     const [toolbarNodeId, setToolbarNodeId] = useState<string | null>(null);
+    const [selectedImageTarget, setSelectedImageTarget] = useState<CanvasImageTarget | null>(null);
     const [nodeImageSettingsOpen, setNodeImageSettingsOpen] = useState(false);
     const [dialogNodeId, setDialogNodeId] = useState<string | null>(null);
     const [infoNodeId, setInfoNodeId] = useState<string | null>(null);
     const [pluginManagerOpen, setPluginManagerOpen] = useState(false);
-    const [cropNodeId, setCropNodeId] = useState<string | null>(null);
-    const [maskEditNodeId, setMaskEditNodeId] = useState<string | null>(null);
-    const [splitNodeId, setSplitNodeId] = useState<string | null>(null);
-    const [upscaleNodeId, setUpscaleNodeId] = useState<string | null>(null);
-    const [superResolveNodeId, setSuperResolveNodeId] = useState<string | null>(null);
-    const [angleNodeId, setAngleNodeId] = useState<string | null>(null);
+    const [imageToolSource, setImageToolSource] = useState<ImageToolSource | null>(null);
     const [previewNodeId, setPreviewNodeId] = useState<string | null>(null);
     const [hoverPreviewNodeId, setHoverPreviewNodeId] = useState<string | null>(null);
     const [previewImageId, setPreviewImageId] = useState<string | null>(null);
@@ -811,17 +819,43 @@ export function CanvasEditor({ document }: { document?: CanvasEditorDocument }) 
     // The toolbar follows a single selected node selected by click, creation, marquee, or keyboard.
     // It stays hidden for multi-selection and while isNodeDragging is true.
     const singleSelectedNodeId = selectedNodeIds.size === 1 ? Array.from(selectedNodeIds)[0] : null;
-    const toolbarNode = (toolbarNodeId ? nodeById.get(toolbarNodeId) || null : null) || (singleSelectedNodeId ? nodeById.get(singleSelectedNodeId) || null : null);
+    const toolbarNode = singleSelectedNodeId ? nodeById.get(toolbarNodeId && selectedNodeIds.has(toolbarNodeId) ? toolbarNodeId : singleSelectedNodeId) || null : null;
+    const toolbarImageId = selectedImageTarget && toolbarNode && selectedImageTarget.nodeId === toolbarNode.id && expandedBatchNodeIds.has(selectedImageTarget.nodeId) && toolbarNode.metadata?.images?.some((image) => image.id === selectedImageTarget.imageId) && selectedImageTarget.imageId !== (toolbarNode.metadata?.primaryImageId || toolbarNode.metadata?.images?.[0]?.id) ? selectedImageTarget.imageId : undefined;
+    const imageToolbarNode = toolbarNode && toolbarImageId ? getCanvasImageNode(toolbarNode, toolbarImageId, true) : toolbarNode;
     const infoNode = infoNodeId ? nodeById.get(infoNodeId) || null : null;
-    const cropNode = cropNodeId ? nodeById.get(cropNodeId) || null : null;
-    const maskEditNode = maskEditNodeId ? nodeById.get(maskEditNodeId) || null : null;
-    const splitNode = splitNodeId ? nodeById.get(splitNodeId) || null : null;
-    const upscaleNode = upscaleNodeId ? nodeById.get(upscaleNodeId) || null : null;
-    const superResolveNode = superResolveNodeId ? nodeById.get(superResolveNodeId) || null : null;
-    const angleNode = angleNodeId ? nodeById.get(angleNodeId) || null : null;
+    const cropNode = imageToolSource?.tool === "crop" ? imageToolSource.node : null;
+    const maskEditNode = imageToolSource?.tool === "maskEdit" ? imageToolSource.node : null;
+    const splitNode = imageToolSource?.tool === "split" ? imageToolSource.node : null;
+    const upscaleNode = imageToolSource?.tool === "upscale" ? imageToolSource.node : null;
+    const superResolveNode = imageToolSource?.tool === "superResolve" ? imageToolSource.node : null;
+    const angleNode = imageToolSource?.tool === "angle" ? imageToolSource.node : null;
+
+    useEffect(() => {
+        if (!toolbarImageId) setSelectedImageTarget(null);
+    }, [toolbarImageId, selectedImageTarget]);
+
+    useEffect(() => {
+        setImageToolSource(null);
+        setSelectedImageTarget(null);
+    }, [projectId, accountId]);
+
+    useEffect(() => {
+        if (imageToolSource && !nodeById.has(imageToolSource.node.id)) {
+            setImageToolSource(null);
+            message.error(t("canvas.projectPage.imageSourceChanged"));
+        }
+    }, [imageToolSource, nodeById, message, t]);
+
+    const openImageTool = (tool: ImageToolSource["tool"], node: CanvasNodeData) => {
+        const source = getCanvasImageNode(node);
+        if (source) setImageToolSource({ tool, node: source, imageId: toolbarImageId || node.metadata?.primaryImageId || node.metadata?.images?.[0]?.id, secondary: Boolean(toolbarImageId) });
+    };
     const contextMenuNode = contextMenu?.type === "node" ? nodeById.get(contextMenu.nodeId) || null : null;
     const previewNode = previewNodeId ? nodeById.get(previewNodeId) || null : null;
-    const previewContent = previewImageId ? previewNode?.metadata?.images?.find((image) => image.id === previewImageId)?.content : previewNode?.metadata?.content;
+    const previewImages = previewNode?.metadata?.images?.filter((image) => image.content) || [];
+    const previewImage = previewImages.find((image) => image.id === (previewImageId || previewNode?.metadata?.primaryImageId)) || previewImages[0];
+    const previewImageIndex = previewImages.findIndex((image) => image.id === previewImage?.id);
+    const previewContent = previewImage?.content || previewNode?.metadata?.content;
     const hasMultipleSelectedNodes = selectedNodeIds.size > 1;
     const selectedNodes = useMemo(() => nodes.filter((node) => selectedNodeIds.has(node.id)), [nodes, selectedNodeIds]);
     const canGroupSelection = canGroupSelectedNodes(selectedNodeIds, nodes);
@@ -1060,6 +1094,7 @@ export function CanvasEditor({ document }: { document?: CanvasEditorDocument }) 
         setSelectionBox(null);
         setHoveredNodeId(null);
         setToolbarNodeId(null);
+        setSelectedImageTarget(null);
         setDialogNodeId(null);
     }, [cancelPendingConnectionCreate]);
 
@@ -1067,9 +1102,7 @@ export function CanvasEditor({ document }: { document?: CanvasEditorDocument }) 
         setNodes([]);
         setConnections([]);
         setInfoNodeId(null);
-        setCropNodeId(null);
-        setMaskEditNodeId(null);
-        setAngleNodeId(null);
+        setImageToolSource(null);
         setPreviewNodeId(null);
         setRunningNodeId(null);
         deselectCanvas();
@@ -1187,7 +1220,7 @@ export function CanvasEditor({ document }: { document?: CanvasEditorDocument }) 
             const node = nodesRef.current.find((item) => item.id === nodeId);
             if (!node) return;
             setHoverPreviewNodeId(null);
-            const target = focusViewportForNode(node, size, measureFocusFrame(containerRef.current, nodeId));
+            const target = focusViewportForNode(node, size, measureFocusFrame(containerRef.current, nodeId, viewportRef.current.k));
             setSelectedNodeIds(new Set([nodeId]));
             setSelectedConnectionId(null);
             setContextMenu(null);
@@ -1357,6 +1390,10 @@ export function CanvasEditor({ document }: { document?: CanvasEditorDocument }) 
             setSelectedConnectionId(null);
             const { nextSelected } = selectNodeByEvent(event, nodeId);
             pendingSelectionRef.current = nextSelected;
+            const node = nodesRef.current.find((item) => item.id === nodeId);
+            const imageId = event.target instanceof Element ? event.target.closest<HTMLElement>("[data-canvas-image-id]")?.dataset.canvasImageId : undefined;
+            const primaryId = node?.metadata?.primaryImageId || node?.metadata?.images?.[0]?.id;
+            setSelectedImageTarget(nextSelected.size === 1 && nextSelected.has(nodeId) && imageId && imageId !== primaryId && node?.metadata?.images?.some((image) => image.id === imageId) ? { nodeId, imageId } : null);
         },
         [selectNodeByEvent],
     );
@@ -1566,21 +1603,30 @@ export function CanvasEditor({ document }: { document?: CanvasEditorDocument }) 
         };
     }, [finishNodeDrag, handleGlobalMouseMove, handleGlobalMouseUp, handleGlobalPointerMove]);
 
-    const createImageFileNode = useCallback(async (file: File, position: Position) => {
+    const importImageFile = useCallback(async (file: File, position: Position, nodeId?: string) => {
         const image = await uploadImage(file);
-        const size = fitNodeSize(image.width, image.height);
-        const id = `image-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-        const newNode: CanvasNodeData = {
-            id,
+        const newNode = { ...createCanvasNode(CanvasNodeType.Image, position, imageMetadata(image)), title: file.name };
+        const id = nodeId || newNode.id;
+
+        setNodes((prev) => nodeId ? prev.map((node) => node.id === nodeId ? {
+            ...node,
             type: CanvasNodeType.Image,
             title: file.name,
-            position: { x: position.x - size.width / 2, y: position.y - size.height / 2 },
-            width: size.width,
-            height: size.height,
-            metadata: imageMetadata(image),
-        };
-
-        setNodes((prev) => [...prev, newNode]);
+            metadata: {
+                ...node.metadata,
+                ...newNode.metadata,
+                errorDetails: undefined,
+                freeResize: false,
+                images: undefined,
+                generationType: undefined,
+                model: undefined,
+                size: undefined,
+                quality: undefined,
+                count: undefined,
+                references: undefined,
+                primaryImageId: undefined,
+            },
+        } : node) : [...prev, newNode]);
         setSelectedNodeIds(new Set([id]));
         setSelectedConnectionId(null);
         setDialogNodeId(id);
@@ -1657,23 +1703,24 @@ export function CanvasEditor({ document }: { document?: CanvasEditorDocument }) 
             if (!imageType) return;
             const blob = await imageItem.getType(imageType);
             const file = new File([blob], "clipboard-image.png", { type: imageType });
-            void createImageFileNode(file, getCanvasCenter());
+            void importImageFile(file, getCanvasCenter());
             message.success(t("canvas.projectPage.clipboardImageAdded"));
             return;
         }
 
         const text = await navigator.clipboard.readText();
         if (createTextNodeFromClipboard(text)) message.success(t("canvas.projectPage.clipboardTextAdded"));
-    }, [createImageFileNode, createTextNodeFromClipboard, getCanvasCenter, message, t]);
+    }, [importImageFile, createTextNodeFromClipboard, getCanvasCenter, message, t]);
 
     useEffect(() => {
         const handleKeyDown = (event: KeyboardEvent) => {
+            if (event.defaultPrevented) return;
             if (documentRef.current && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
                 event.preventDefault();
                 if (!documentRef.current.busy) void saveCurrentProject();
                 return;
             }
-            if (documentRef.current?.busy) return;
+            if (documentRef.current?.busy || previewContent) return;
             const target = event.target instanceof Element ? event.target : null;
             if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement || target?.closest("[contenteditable='true'],[data-canvas-no-zoom],[data-canvas-shortcuts-ignore]")) return;
 
@@ -1749,15 +1796,15 @@ export function CanvasEditor({ document }: { document?: CanvasEditorDocument }) 
                 setToolbarNodeId(null);
                 setDialogNodeId(null);
                 setInfoNodeId(null);
-                setCropNodeId(null);
-                setMaskEditNodeId(null);
+                setImageToolSource(null);
+                setSelectedImageTarget(null);
                 setPendingConnectionCreate(null);
             }
         };
 
         window.addEventListener("keydown", handleKeyDown);
         return () => window.removeEventListener("keydown", handleKeyDown);
-    }, [copySelectedNodes, deleteConnection, deleteNodes, groupSelection, pasteCopiedNodes, pasteSystemClipboard, redoCanvas, saveCurrentProject, selectedConnectionId, setConnecting, shortcutBindings, undoCanvas, ungroupSelection]);
+    }, [copySelectedNodes, deleteConnection, deleteNodes, groupSelection, pasteCopiedNodes, pasteSystemClipboard, previewContent, redoCanvas, saveCurrentProject, selectedConnectionId, setConnecting, shortcutBindings, undoCanvas, ungroupSelection]);
 
     const handleConnectStart = useCallback(
         (event: ReactMouseEvent, nodeId: string, handleType: "source" | "target") => {
@@ -1808,6 +1855,7 @@ export function CanvasEditor({ document }: { document?: CanvasEditorDocument }) 
     }, []);
 
     const toggleBatchExpanded = useCallback((nodeId: string) => {
+        setSelectedImageTarget(null);
         setExpandedBatchNodeIds((current) => {
             const next = new Set(current);
             if (next.has(nodeId)) next.delete(nodeId);
@@ -1817,6 +1865,7 @@ export function CanvasEditor({ document }: { document?: CanvasEditorDocument }) 
     }, []);
 
     const setBatchPrimary = useCallback((nodeId: string, itemId: string) => {
+        setSelectedImageTarget(null);
         setNodes((prev) =>
             prev.map((node) => {
                 if (node.id !== nodeId) return node;
@@ -1824,63 +1873,79 @@ export function CanvasEditor({ document }: { document?: CanvasEditorDocument }) 
                     const text = node.metadata?.texts?.find((item) => item.id === itemId);
                     return text?.content ? { ...node, metadata: { ...node.metadata, content: text.content, primaryTextId: text.id } } : node;
                 }
-                const image = node.metadata?.images?.find((item) => item.id === itemId);
-                if (!image?.content) return node;
-                const edge = Math.max(node.width, node.height);
-                const size = node.metadata?.freeResize ? { width: node.width, height: node.height } : fitNodeSize(image.naturalWidth, image.naturalHeight, edge, edge);
-                return {
-                    ...node,
-                    position: { x: node.position.x + node.width / 2 - size.width / 2, y: node.position.y + node.height / 2 - size.height / 2 },
-                    ...size,
-                    metadata: {
-                        ...node.metadata,
-                        content: image.content,
-                        storageKey: image.storageKey,
-                        naturalWidth: image.naturalWidth,
-                        naturalHeight: image.naturalHeight,
-                        bytes: image.bytes,
-                        mimeType: image.mimeType,
-                        primaryImageId: image.id,
-                    },
-                };
+                return applyImagePrimary(node, itemId);
             }),
         );
     }, []);
 
-    const duplicateBatchImage = useCallback((node: CanvasNodeData, imageId: string) => {
-        const image = node.metadata?.images?.find((item) => item.id === imageId);
-        if (!image?.content) return;
-        const id = nanoid();
-        const edge = Math.max(node.width, node.height);
-        const size = fitNodeSize(image.naturalWidth, image.naturalHeight, edge, edge);
-        const copy: CanvasNodeData = {
-            id,
-            type: CanvasNodeType.Image,
-            title: node.title,
-            position: { x: node.position.x + node.width * 2 + 96, y: node.position.y + node.height / 2 - size.height / 2 },
-            ...size,
-            metadata: {
-                content: image.content,
-                storageKey: image.storageKey,
-                naturalWidth: image.naturalWidth,
-                naturalHeight: image.naturalHeight,
-                bytes: image.bytes,
-                mimeType: image.mimeType,
-                status: NODE_STATUS_SUCCESS,
-                prompt: node.metadata?.prompt,
-                generationType: node.metadata?.generationType,
-                model: node.metadata?.model,
-                size: node.metadata?.size,
-                quality: node.metadata?.quality,
-                background: node.metadata?.background,
-                references: node.metadata?.references,
-            },
+    const confirmImageToolSource = useCallback((source: ImageToolSource): CanvasNodeData | null => {
+        const current = nodesRef.current.find((node) => node.id === source.node.id);
+        const image = current && getCanvasImageNode(current, source.imageId);
+        if (!current || !image?.metadata?.content || image.metadata.content !== source.node.metadata?.content || image.metadata.storageKey !== source.node.metadata?.storageKey) {
+            message.error(t("canvas.projectPage.imageSourceChanged"));
+            return null;
+        }
+        const primary = source.imageId ? applyImagePrimary(current, source.imageId) : current;
+        if (source.imageId) setBatchPrimary(current.id, source.imageId);
+        return { ...source.node, position: primary.position, width: primary.width, height: primary.height };
+    }, [message, setBatchPrimary, t]);
+
+    const navigatePreviewImage = useCallback((direction: -1 | 1) => {
+        const node = nodesRef.current.find((item) => item.id === previewNodeId);
+        if (!node) return;
+        const images = node.metadata?.images || [];
+        setPreviewImageId((current) => {
+            const currentId = images.find((image) => image.content && image.id === (current || node.metadata?.primaryImageId))?.id || images.find((image) => image.content)?.id;
+            return getAdjacentImageId(images, currentId, direction) || current;
+        });
+    }, [previewNodeId]);
+
+    useEffect(() => {
+        const handleImageKeyDown = (event: KeyboardEvent) => {
+            if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey || isImeComposing(event)) return;
+            const key = event.key.toLowerCase();
+            const direction = key === "arrowleft" || key === "a" ? -1 : key === "arrowright" || key === "d" ? 1 : null;
+            if (!direction || documentRef.current?.busy || isNodeDragging || isNodeResizing || titleEditing) return;
+            const target = event.target instanceof Element ? event.target : null;
+            if (target?.closest("input,textarea,select,[contenteditable]:not([contenteditable='false']),[data-canvas-no-zoom],[data-canvas-shortcuts-ignore]")) return;
+            const otherModalOpen = Array.from(window.document.querySelectorAll<HTMLElement>(".ant-modal-wrap")).some((modal) => modal.getClientRects().length > 0 && !modal.querySelector("[data-canvas-image-preview]"));
+            if (otherModalOpen) return;
+
+            if (previewContent) {
+                if (previewImages.length < 2) return;
+                event.preventDefault();
+                event.stopImmediatePropagation();
+                navigatePreviewImage(direction);
+                return;
+            }
+            if (referencePickerNodeId || connectingParams || selectionBox || selectedNodeIdsRef.current.size !== 1) return;
+            const node = nodesRef.current.find((item) => selectedNodeIdsRef.current.has(item.id));
+            if (node?.type !== CanvasNodeType.Image) return;
+            const images = node.metadata?.images || [];
+            const imageId = getAdjacentImageId(images, node.metadata?.primaryImageId || images[0]?.id, direction);
+            if (!imageId) return;
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            setBatchPrimary(node.id, imageId);
         };
+
+        window.addEventListener("keydown", handleImageKeyDown, true);
+        return () => window.removeEventListener("keydown", handleImageKeyDown, true);
+    }, [connectingParams, isNodeDragging, isNodeResizing, navigatePreviewImage, previewContent, previewImages.length, referencePickerNodeId, selectionBox, setBatchPrimary, titleEditing]);
+
+    const duplicateImage = useCallback((node: CanvasNodeData) => {
+        if (!node.metadata?.content) return;
+        const copy = createCanvasImageCopy(node);
         setNodes((prev) => [...prev, copy]);
-        setSelectedNodeIds(new Set([id]));
+        setSelectedNodeIds(new Set([copy.id]));
         setSelectedConnectionId(null);
-        setDialogNodeId(id);
+        setDialogNodeId(copy.id);
     }, []);
+
+    const duplicateBatchImage = useCallback((node: CanvasNodeData, imageId: string) => {
+        const source = getCanvasImageNode(node, imageId, expandedBatchNodeIds.has(node.id));
+        if (source) duplicateImage(source);
+    }, [duplicateImage, expandedBatchNodeIds]);
 
     const handleNodePromptChange = useCallback((nodeId: string, prompt: string) => {
         setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, prompt } } : node)));
@@ -1893,6 +1958,14 @@ export function CanvasEditor({ document }: { document?: CanvasEditorDocument }) 
             return applyNodeConfigPatch(node, changedMode && !patch?.model ? { ...patch, model: undefined } : patch);
         }));
     }, []);
+
+    const toggleNodePanelPin = useCallback((nodeId: string) => {
+        const node = nodesRef.current.find((item) => item.id === nodeId);
+        if (!node) return;
+        const panelPinned = !(node.metadata?.panelPinned ?? alwaysShowPanels);
+        setNodes((current) => current.map((item) => item.id === nodeId ? { ...item, metadata: { ...item.metadata, panelPinned } } : item));
+        if (!panelPinned) setDialogNodeId((current) => current === nodeId ? null : current);
+    }, [alwaysShowPanels]);
 
     const downloadNodeImage = useCallback((node: CanvasNodeData) => {
         if ((node.type !== CanvasNodeType.Image && node.type !== CanvasNodeType.Video && node.type !== CanvasNodeType.Audio) || !node.metadata?.content) return;
@@ -2024,8 +2097,9 @@ export function CanvasEditor({ document }: { document?: CanvasEditorDocument }) 
         [effectiveConfig.model, effectiveConfig.textModel, message, t],
     );
 
-    const cropImageNode = useCallback(async (node: CanvasNodeData, crop: CanvasImageCropRect) => {
-        if (!node.metadata?.content) return;
+    const cropImageNode = useCallback(async (source: ImageToolSource, crop: CanvasImageCropRect) => {
+        const node = confirmImageToolSource(source);
+        if (!node?.metadata?.content) return;
         const cropped = await cropDataUrl(node.metadata.content, crop);
         const image = await uploadImage(cropped);
         const width = Math.min(node.width, Math.max(220, image.width));
@@ -2046,13 +2120,14 @@ export function CanvasEditor({ document }: { document?: CanvasEditorDocument }) 
         setConnections((prev) => [...prev, { id: nanoid(), fromNodeId: node.id, toNodeId: childId }]);
         setSelectedNodeIds(new Set([childId]));
         setDialogNodeId(childId);
-        setCropNodeId(null);
-    }, []);
+        setImageToolSource(null);
+    }, [confirmImageToolSource]);
 
     const splitImageNode = useCallback(
-        async (node: CanvasNodeData, params: CanvasImageSplitParams) => {
-            if (!node.metadata?.content) return;
-            setSplitNodeId(null);
+        async (source: ImageToolSource, params: CanvasImageSplitParams) => {
+            const node = confirmImageToolSource(source);
+            if (!node?.metadata?.content) return;
+            setImageToolSource(null);
             const pieces = await splitDataUrl(node.metadata.content, params);
             const gap = 16;
             const cellWidth = node.width / params.columns;
@@ -2084,30 +2159,49 @@ export function CanvasEditor({ document }: { document?: CanvasEditorDocument }) 
             setDialogNodeId(null);
             message.success(t("canvas.projectPage.splitSuccess", { count: childNodes.length }));
         },
-        [message, t],
+        [confirmImageToolSource, message, t],
     );
 
     const maskEditImageNode = useCallback(
-        async (node: CanvasNodeData, payload: CanvasImageMaskEditPayload) => {
-            if (!node.metadata?.content) return;
-            const generationConfig = { ...buildGenerationConfig(effectiveConfig, node, "image"), count: "1", size: node.metadata?.size || "auto" };
+        async (toolSource: ImageToolSource, payload: CanvasImageMaskEditPayload) => {
+            const generationConfig = { ...buildGenerationConfig(effectiveConfig, toolSource.node, "image"), count: "1", size: toolSource.node.metadata?.size || "auto" };
             if (payload.generate && !isAiConfigReady(generationConfig, generationConfig.model)) {
                 openConfigDialog(true);
                 return;
             }
+            const originalNode = confirmImageToolSource(toolSource);
+            if (!originalNode?.metadata?.content) return;
+            const sourceCopy = toolSource.secondary && !payload.generate ? createCanvasImageCopy(originalNode) : null;
+            const node = sourceCopy || originalNode;
+            if (!node.metadata?.content) return;
             const userPrompt = payload.prompt.trim();
-            const prompt = t("canvas.projectPage.maskPrompt", { source: imageReferenceLabel(0), mask: imageReferenceLabel(1), prompt: userPrompt });
-            setMaskEditNodeId(null);
-            const maskImage = await uploadImage(payload.maskDataUrl);
+            const prompt = [
+                t("canvas.projectPage.maskPrompt", { source: imageReferenceLabel(0), mask: imageReferenceLabel(1) }),
+                payload.referenceImages.length ? t("canvas.projectPage.maskReferencesPrompt", { references: payload.referenceImages.map((_, index) => imageReferenceLabel(index + 2)).join(t("imageReferences.separator")) }) : "",
+                userPrompt ? t("canvas.projectPage.maskInstructionsPrompt", { prompt: userPrompt }) : "",
+            ].filter(Boolean).join("\n\n");
+            const [maskImage, ...uploadedReferences] = await Promise.all([uploadImage(payload.maskDataUrl), ...payload.referenceImages.map((image) => uploadImage(image.dataUrl))]);
             const maskNodeId = nanoid();
             const childId = nanoid();
+            const referenceSize = NODE_DEFAULT_SIZE[CanvasNodeType.Image];
+            const referenceNodes: CanvasNodeData[] = uploadedReferences.map((image, index) => ({
+                id: payload.referenceImages[index].id,
+                type: CanvasNodeType.Image,
+                title: payload.referenceImages[index].name,
+                position: { x: node.position.x, y: node.position.y + node.height * 2 + 192 + index * (referenceSize.height + 24) },
+                width: referenceSize.width,
+                height: referenceSize.height,
+                metadata: imageMetadata(image),
+            }));
             const source = { id: node.id, name: `${node.title || node.id}.png`, type: node.metadata.mimeType || "image/png", dataUrl: node.metadata.content, storageKey: node.metadata.storageKey };
             const maskSource = { id: maskNodeId, name: "mask.png", type: maskImage.mimeType || "image/png", dataUrl: maskImage.url, storageKey: maskImage.storageKey };
-            const references = [source, maskSource];
+            const references = [source, maskSource, ...uploadedReferences.map((image, index) => ({ ...payload.referenceImages[index], dataUrl: image.url, storageKey: image.storageKey, type: image.mimeType }))];
             const generationMetadata = buildImageGenerationMetadata("edit", generationConfig, 1, references);
             const childMetadata = payload.generate ? { prompt, status: NODE_STATUS_LOADING, ...generationMetadata } : { prompt };
+            setImageToolSource(null);
             setNodes((prev) => [
                 ...prev,
+                ...(sourceCopy ? [sourceCopy] : []),
                 {
                     id: maskNodeId,
                     type: CanvasNodeType.Image,
@@ -2117,6 +2211,7 @@ export function CanvasEditor({ document }: { document?: CanvasEditorDocument }) 
                     height: node.height,
                     metadata: imageMetadata(maskImage),
                 },
+                ...referenceNodes,
                 {
                     id: childId,
                     type: CanvasNodeType.Image,
@@ -2131,6 +2226,7 @@ export function CanvasEditor({ document }: { document?: CanvasEditorDocument }) 
                 ...prev,
                 { id: nanoid(), fromNodeId: node.id, toNodeId: childId },
                 { id: nanoid(), fromNodeId: maskNodeId, toNodeId: childId },
+                ...referenceNodes.map((reference) => ({ id: nanoid(), fromNodeId: reference.id, toNodeId: childId })),
             ]);
             setSelectedNodeIds(new Set([childId]));
             setSelectedConnectionId(null);
@@ -2153,12 +2249,13 @@ export function CanvasEditor({ document }: { document?: CanvasEditorDocument }) 
                 setRunningNodeId(null);
             }
         },
-        [effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, startGenerationRequest, t],
+        [confirmImageToolSource, effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, startGenerationRequest, t],
     );
 
-    const upscaleImageNode = useCallback(async (node: CanvasNodeData, params: CanvasImageUpscaleParams) => {
-        if (!node.metadata?.content) return;
-        setUpscaleNodeId(null);
+    const upscaleImageNode = useCallback(async (source: ImageToolSource, params: CanvasImageUpscaleParams) => {
+        const node = confirmImageToolSource(source);
+        if (!node?.metadata?.content) return;
+        setImageToolSource(null);
         const upscaled = await upscaleDataUrl(node.metadata.content, params);
         const image = await uploadImage(upscaled);
         const size = fitNodeSize(image.width, image.height);
@@ -2179,16 +2276,17 @@ export function CanvasEditor({ document }: { document?: CanvasEditorDocument }) 
         setConnections((prev) => [...prev, { id: nanoid(), fromNodeId: node.id, toNodeId: childId }]);
         setSelectedNodeIds(new Set([childId]));
         setDialogNodeId(childId);
-    }, []);
+    }, [confirmImageToolSource]);
 
     const generateAngleNode = useCallback(
-        async (node: CanvasNodeData, params: CanvasImageAngleParams) => {
-            if (!node.metadata?.content) return;
-            const generationConfig = { ...buildGenerationConfig(effectiveConfig, node, "image"), count: "1" };
+        async (source: ImageToolSource, params: CanvasImageAngleParams) => {
+            const generationConfig = { ...buildGenerationConfig(effectiveConfig, source.node, "image"), count: "1" };
             if (!isAiConfigReady(generationConfig, generationConfig.model)) {
                 openConfigDialog(true);
                 return;
             }
+            const node = confirmImageToolSource(source);
+            if (!node?.metadata?.content) return;
             const childId = nanoid();
             const imageConfig = NODE_DEFAULT_SIZE[CanvasNodeType.Image];
             const title = buildAngleLabel(params);
@@ -2196,7 +2294,7 @@ export function CanvasEditor({ document }: { document?: CanvasEditorDocument }) 
             const generationMetadata = buildImageGenerationMetadata("edit", generationConfig, 1, [
                 { id: node.id, name: `${node.title || node.id}.png`, type: node.metadata.mimeType || "image/png", dataUrl: node.metadata.content, storageKey: node.metadata.storageKey },
             ]);
-            setAngleNodeId(null);
+            setImageToolSource(null);
             setRunningNodeId(childId);
             setNodes((prev) => [
                 ...prev,
@@ -2233,7 +2331,7 @@ export function CanvasEditor({ document }: { document?: CanvasEditorDocument }) 
                 setRunningNodeId(null);
             }
         },
-        [effectiveConfig, finishGenerationRequest, openConfigDialog, startGenerationRequest, t],
+        [confirmImageToolSource, effectiveConfig, finishGenerationRequest, isAiConfigReady, openConfigDialog, startGenerationRequest, t],
     );
 
     const handleFontSizeChange = useCallback((nodeId: string, fontSize: number) => {
@@ -2311,37 +2409,7 @@ export function CanvasEditor({ document }: { document?: CanvasEditorDocument }) 
                     setSelectedNodeIds(new Set([target.nodeId]));
                     setSelectedConnectionId(null);
                 } else {
-                    const image = await uploadImage(first);
-                    const s = fitNodeSize(image.width, image.height);
-                    setNodes((prev) =>
-                        prev.map((node) =>
-                            node.id === target.nodeId
-                                ? {
-                                      ...node,
-                                      type: CanvasNodeType.Image,
-                                      title: first.name,
-                                      width: s.width,
-                                      height: s.height,
-                                      metadata: {
-                                          ...node.metadata,
-                                          ...imageMetadata(image),
-                                          errorDetails: undefined,
-                                          freeResize: false,
-                                          images: undefined,
-                                          generationType: undefined,
-                                          model: undefined,
-                                          size: undefined,
-                                          quality: undefined,
-                                          count: undefined,
-                                          references: undefined,
-                                          primaryImageId: undefined,
-                                      },
-                                  }
-                                : node,
-                        ),
-                    );
-                    setSelectedNodeIds(new Set([target.nodeId]));
-                    setSelectedConnectionId(null);
+                    await importImageFile(first, basePosition, target.nodeId);
                 }
 
                 // Create the remaining files near the target node.
@@ -2353,7 +2421,7 @@ export function CanvasEditor({ document }: { document?: CanvasEditorDocument }) 
                     } else if (f.type.startsWith("video/")) {
                         void createVideoFileNode(f, offsetPos);
                     } else {
-                        void createImageFileNode(f, offsetPos);
+                        void importImageFile(f, offsetPos);
                     }
                 }
             } else {
@@ -2366,7 +2434,7 @@ export function CanvasEditor({ document }: { document?: CanvasEditorDocument }) 
                     } else if (f.type.startsWith("video/")) {
                         void createVideoFileNode(f, offsetPos);
                     } else {
-                        void createImageFileNode(f, offsetPos);
+                        void importImageFile(f, offsetPos);
                     }
                 }
             }
@@ -2374,7 +2442,7 @@ export function CanvasEditor({ document }: { document?: CanvasEditorDocument }) 
             uploadTargetRef.current = null;
             event.target.value = "";
         },
-        [createAudioFileNode, createImageFileNode, createVideoFileNode, screenToCanvas, size.height, size.width],
+        [createAudioFileNode, importImageFile, createVideoFileNode, screenToCanvas, size.height, size.width],
     );
 
     const insertWorkflow = useCallback(async (id: string, position?: Position) => {
@@ -2428,6 +2496,8 @@ export function CanvasEditor({ document }: { document?: CanvasEditorDocument }) 
             if (!files.length) return;
 
             const basePos = screenToCanvas(event.clientX, event.clientY);
+            const targetId = event.target instanceof Element ? event.target.closest<HTMLElement>("[data-node-id]")?.dataset.nodeId : undefined;
+            const targetNode = nodesRef.current.find((node) => node.id === targetId && node.type === CanvasNodeType.Image);
             const STAGGER = 40;
             for (let i = 0; i < files.length; i++) {
                 const pos = { x: basePos.x + i * STAGGER, y: basePos.y + i * STAGGER };
@@ -2437,11 +2507,11 @@ export function CanvasEditor({ document }: { document?: CanvasEditorDocument }) 
                 } else if (f.type.startsWith("video/")) {
                     void createVideoFileNode(f, pos);
                 } else {
-                    void createImageFileNode(f, pos);
+                    void importImageFile(f, pos, i === 0 ? targetNode?.id : undefined);
                 }
             }
         },
-        [createAudioFileNode, createImageFileNode, createVideoFileNode, screenToCanvas, insertWorkflow],
+        [createAudioFileNode, importImageFile, createVideoFileNode, screenToCanvas, insertWorkflow],
     );
 
     const startTitleEditing = useCallback(() => {
@@ -2711,7 +2781,7 @@ export function CanvasEditor({ document }: { document?: CanvasEditorDocument }) 
                     pendingChildIds = [videoId];
                     setNodes((prev) =>
                         reuseVideoNode
-                            ? prev.map((node) => (node.id === nodeId ? { ...node, ...videoNode } : node))
+                            ? prev.map((node) => (node.id === nodeId ? { ...node, ...videoNode, metadata: { ...videoNode.metadata, panelPinned: node.metadata?.panelPinned } } : node))
                             : [...prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_SUCCESS } } : node)), videoNode],
                     );
                     if (!reuseVideoNode) setConnections((prev) => [...prev, { id: nanoid(), fromNodeId: nodeId, toNodeId: videoId }]);
@@ -2750,7 +2820,7 @@ export function CanvasEditor({ document }: { document?: CanvasEditorDocument }) 
                     pendingChildIds = [audioId];
                     setNodes((prev) =>
                         reuseAudioNode
-                            ? prev.map((node) => (node.id === nodeId ? { ...node, ...audioNode } : node))
+                            ? prev.map((node) => (node.id === nodeId ? { ...node, ...audioNode, metadata: { ...audioNode.metadata, panelPinned: node.metadata?.panelPinned } } : node))
                             : [...prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_SUCCESS } } : node)), audioNode],
                     );
                     if (!reuseAudioNode) setConnections((prev) => [...prev, { id: nanoid(), fromNodeId: nodeId, toNodeId: audioId }]);
@@ -2794,7 +2864,7 @@ export function CanvasEditor({ document }: { document?: CanvasEditorDocument }) 
                 pendingChildIds = [rootId];
                 setNodes((prev) =>
                     reuseTextNode
-                        ? prev.map((node) => (node.id === nodeId ? { ...node, ...rootNode } : node))
+                        ? prev.map((node) => (node.id === nodeId ? { ...node, ...rootNode, metadata: { ...rootNode.metadata, panelPinned: node.metadata?.panelPinned } } : node))
                         : [...prev.map((node) => (node.id === nodeId && isConfigNode ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_LOADING, errorDetails: undefined } } : node)), rootNode],
                 );
                 if (!reuseTextNode) setConnections((prev) => [...prev, { id: nanoid(), fromNodeId: nodeId, toNodeId: rootId }]);
@@ -3200,7 +3270,7 @@ export function CanvasEditor({ document }: { document?: CanvasEditorDocument }) 
     }, []);
     const handleNodeViewImage = useCallback((node: CanvasNodeData, imageId?: string) => {
         setPreviewNodeId(node.id);
-        setPreviewImageId(imageId || null);
+        setPreviewImageId(imageId || node.metadata?.primaryImageId || node.metadata?.images?.find((image) => image.content)?.id || null);
     }, []);
     const handleNodeRetry = useCallback(
         (node: CanvasNodeData) => {
@@ -3376,10 +3446,11 @@ export function CanvasEditor({ document }: { document?: CanvasEditorDocument }) 
                             isConnectionTarget={connectionTargetNodeId === node.id}
                             isConnecting={Boolean(connectingParams)}
                             referenceSelectionState={!referencePickerNodeId ? undefined : node.id === referencePickerNodeId ? "target" : referenceConnectedNodeIds.has(node.id) || !isCanvasReferenceNode(node, nodes) ? "disabled" : "available"}
-                            showPanel={!isNodeResizing && dialogNodeId === node.id && !selectionBox && !getNodeDefinition(node.type)?.hidePanel}
+                            showPanel={!getNodeDefinition(node.type)?.hidePanel && ((node.metadata?.panelPinned ?? alwaysShowPanels) || (!isNodeResizing && dialogNodeId === node.id && !selectionBox))}
                             groupChildCount={groupChildCountById.get(node.id) || 0}
                             isGroupDropTarget={dropTargetGroupId === node.id}
                             batchExpanded={expandedBatchNodeIds.has(node.id)}
+                            selectedBatchImageId={toolbarImageId && selectedImageTarget?.nodeId === node.id ? toolbarImageId : undefined}
                             showImageInfo={showImageInfo}
                             mentionReferences={mentionReferencesByNodeId.get(node.id) || EMPTY_REFERENCES}
                             pluginHost={pluginHost}
@@ -3396,6 +3467,7 @@ export function CanvasEditor({ document }: { document?: CanvasEditorDocument }) 
                             onResizeEnd={handleNodeResizeEnd}
                             onContentChange={handleNodeContentChange}
                             onTitleChange={handleNodeTitleChange}
+                            onTogglePanelPin={toggleNodePanelPin}
                             onToggleBatch={toggleBatchExpanded}
                             onSetBatchPrimary={setBatchPrimary}
                             onDuplicateBatchImage={duplicateBatchImage}
@@ -3461,7 +3533,9 @@ export function CanvasEditor({ document }: { document?: CanvasEditorDocument }) 
                 </div>
 
                 <CanvasNodeHoverToolbar
-                    node={isNodeDragging || isNodeResizing || nodeImageSettingsOpen || Boolean(referencePickerNodeId) || expandedBatchNodeIds.has(toolbarNode?.id || "") ? null : toolbarNode}
+                    node={isNodeDragging || isNodeResizing || nodeImageSettingsOpen || Boolean(referencePickerNodeId) ? null : imageToolbarNode}
+                    imageId={toolbarImageId}
+                    secondaryImage={Boolean(toolbarImageId)}
                     viewport={viewport}
                     extraTools={toolbarNode ? buildNodeToolbarItems(toolbarNode) : undefined}
                     onKeep={keepNodeToolbar}
@@ -3473,14 +3547,18 @@ export function CanvasEditor({ document }: { document?: CanvasEditorDocument }) 
                     onGenerateImage={generateImageFromTextNode}
                     onUpload={(node) => handleUploadRequest(node.id)}
                     onDownload={downloadNodeImage}
+                    onDuplicate={(node) => {
+                        const source = getCanvasImageNode(node);
+                        if (source) duplicateImage(source);
+                    }}
                     onSaveAsset={(node) => void saveNodeAsset(node)}
-                    onMaskEdit={(node) => setMaskEditNodeId(node.id)}
-                    onCrop={(node) => setCropNodeId(node.id)}
-                    onSplit={(node) => setSplitNodeId(node.id)}
-                    onUpscale={(node) => setUpscaleNodeId(node.id)}
-                    onSuperResolve={(node) => setSuperResolveNodeId(node.id)}
-                    onAngle={(node) => setAngleNodeId(node.id)}
-                    onViewImage={handleNodeViewImage}
+                    onMaskEdit={(node) => openImageTool("maskEdit", node)}
+                    onCrop={(node) => openImageTool("crop", node)}
+                    onSplit={(node) => openImageTool("split", node)}
+                    onUpscale={(node) => openImageTool("upscale", node)}
+                    onSuperResolve={(node) => openImageTool("superResolve", node)}
+                    onAngle={(node) => openImageTool("angle", node)}
+                    onViewImage={(node) => handleNodeViewImage(node, toolbarImageId)}
                     onReversePrompt={createImageReversePromptNodes}
                     onRetry={(node) => void handleRetryNode(node)}
                     onToggleFreeResize={(node) => toggleNodeFreeResize(node.id)}
@@ -3564,34 +3642,40 @@ export function CanvasEditor({ document }: { document?: CanvasEditorDocument }) 
                 <CanvasNodeInfoModal node={infoNode} open={Boolean(infoNode)} onClose={() => setInfoNodeId(null)} />
                 <CanvasPluginManagerModal open={pluginManagerOpen} onClose={() => setPluginManagerOpen(false)} />
 
-                {cropNode?.metadata?.content ? <CanvasNodeCropDialog dataUrl={cropNode.metadata.content} open={Boolean(cropNode)} onClose={() => setCropNodeId(null)} onConfirm={(crop) => void cropImageNode(cropNode!, crop)} /> : null}
+                {cropNode?.metadata?.content ? <CanvasNodeCropDialog dataUrl={cropNode.metadata.content} open={Boolean(cropNode)} onClose={() => setImageToolSource(null)} onConfirm={(crop) => void cropImageNode(imageToolSource!, crop)} /> : null}
 
                 {maskEditNode?.metadata?.content ? (
-                    <CanvasNodeMaskEditDialog dataUrl={maskEditNode.metadata.content} open={Boolean(maskEditNode)} onClose={() => setMaskEditNodeId(null)} onConfirm={(payload) => void maskEditImageNode(maskEditNode!, payload)} />
+                    <CanvasNodeMaskEditDialog dataUrl={maskEditNode.metadata.content} open={Boolean(maskEditNode)} onClose={() => setImageToolSource(null)} onConfirm={(payload) => maskEditImageNode(imageToolSource!, payload)} />
                 ) : null}
 
-                {splitNode?.metadata?.content ? <CanvasNodeSplitDialog dataUrl={splitNode.metadata.content} open={Boolean(splitNode)} onClose={() => setSplitNodeId(null)} onConfirm={(params) => void splitImageNode(splitNode!, params)} /> : null}
+                {splitNode?.metadata?.content ? <CanvasNodeSplitDialog dataUrl={splitNode.metadata.content} open={Boolean(splitNode)} onClose={() => setImageToolSource(null)} onConfirm={(params) => void splitImageNode(imageToolSource!, params)} /> : null}
 
                 {upscaleNode?.metadata?.content ? (
-                    <CanvasNodeUpscaleDialog dataUrl={upscaleNode.metadata.content} open={Boolean(upscaleNode)} onClose={() => setUpscaleNodeId(null)} onConfirm={(params) => void upscaleImageNode(upscaleNode!, params)} />
+                    <CanvasNodeUpscaleDialog dataUrl={upscaleNode.metadata.content} open={Boolean(upscaleNode)} onClose={() => setImageToolSource(null)} onConfirm={(params) => void upscaleImageNode(imageToolSource!, params)} />
                 ) : null}
 
-                <Modal title={t("canvas.projectPage.superResolve")} open={Boolean(superResolveNode?.metadata?.content)} centered footer={null} onCancel={() => setSuperResolveNodeId(null)}>
+                <Modal title={t("canvas.projectPage.superResolve")} open={Boolean(superResolveNode?.metadata?.content)} centered footer={null} onCancel={() => setImageToolSource(null)}>
                     <div className="py-8 text-center text-base font-medium">{t("canvas.projectPage.notImplemented")}</div>
                 </Modal>
 
-                {angleNode?.metadata?.content ? <CanvasNodeAngleDialog dataUrl={angleNode.metadata.content} open={Boolean(angleNode)} onClose={() => setAngleNodeId(null)} onConfirm={(params) => void generateAngleNode(angleNode!, params)} /> : null}
+                {angleNode?.metadata?.content ? <CanvasNodeAngleDialog dataUrl={angleNode.metadata.content} open={Boolean(angleNode)} onClose={() => setImageToolSource(null)} onConfirm={(params) => void generateAngleNode(imageToolSource!, params)} /> : null}
 
                 <Modal
                     title={t("canvas.projectPage.imageDetails")}
                     open={Boolean(previewContent)}
                     centered
-                    onCancel={() => setPreviewNodeId(null)}
+                    onCancel={() => {
+                        setPreviewNodeId(null);
+                        setPreviewImageId(null);
+                    }}
                     footer={null}
                     width="auto"
                     styles={{ body: { padding: 0, display: "flex", justifyContent: "center", alignItems: "center", maxHeight: "80vh" } }}
                 >
-                    {previewContent ? <img src={previewContent} alt={previewNode?.title || t("assets.kinds.image")} style={{ maxWidth: "100%", maxHeight: "80vh", objectFit: "contain" }} /> : null}
+                    <div data-canvas-image-preview className="flex max-w-full flex-col items-center gap-2">
+                        {previewContent ? <img src={previewContent} alt={previewNode?.title || t("assets.kinds.image")} style={{ maxWidth: "100%", maxHeight: previewImages.length > 1 ? "calc(80vh - 40px)" : "80vh", objectFit: "contain" }} /> : null}
+                        <CanvasImageNavigation index={previewImageIndex} count={previewImages.length} onChange={navigatePreviewImage} />
+                    </div>
                 </Modal>
 
                 <Modal

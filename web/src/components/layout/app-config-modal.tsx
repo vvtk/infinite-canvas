@@ -64,6 +64,8 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "system-ch
     const [webdavSyncStatus, setWebdavSyncStatus] = useState("");
     const [webdavDomainProgress, setWebdavDomainProgress] = useState(createWebdavDomainProgress);
     const config = useConfigStore((state) => state.config);
+    const canvasPreferences = useConfigStore((state) => state.canvasPreferences);
+    const updateCanvasPreference = useConfigStore((state) => state.updateCanvasPreference);
     const site = useSiteStore(state => state.settings);
     const user = useUserStore(state => state.user);
     const hidePrivateChannels = site?.hidePrivateChannels === true && !user?.isAdmin && !isAdminRole(user?.role);
@@ -361,6 +363,23 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "system-ch
                                     {syncingWebdav || webdavSyncStatus ? <WebdavProgressGrid progress={webdavDomainProgress} t={t} /> : null}
                                 </section>
                             </Form>
+                        ),
+                    },
+                    {
+                        key: "canvas",
+                        label: t("config.canvas.title"),
+                        children: (
+                            <div className="space-y-5 rounded-lg border border-stone-200 p-4 dark:border-stone-800">
+                                {(["alwaysShowPanels", "hideImageBackground", "developerMode"] as const).map((key) => (
+                                    <div key={key} className="flex items-center justify-between gap-6">
+                                        <div>
+                                            <div className="text-sm font-medium">{t(`config.canvas.${key}`)}</div>
+                                            <div className="mt-1 text-xs opacity-60">{t(`config.canvas.${key}Description`)}</div>
+                                        </div>
+                                        <Switch checked={canvasPreferences[key]} onChange={(checked) => updateCanvasPreference(key, checked)} aria-label={t(`config.canvas.${key}`)} />
+                                    </div>
+                                ))}
+                            </div>
                         ),
                     },
                     {

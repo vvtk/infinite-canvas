@@ -5,7 +5,7 @@ import type { CanvasNodeData } from "@/types/canvas";
 import i18n from "@/i18n";
 
 export type ImageNodeActionToolId = "copyPrompt" | "reversePrompt" | "replace" | "resize" | "maskEdit" | "crop" | "split" | "upscale" | "superResolve" | "angle" | "view";
-export type ImageQuickToolId = "info" | "delete" | "saveAsset" | "download" | ImageNodeActionToolId;
+export type ImageQuickToolId = "info" | "delete" | "saveAsset" | "download" | "duplicate" | ImageNodeActionToolId;
 
 export type ImageToolHandlers = {
     onUpload: (node: CanvasNodeData) => void;
@@ -32,13 +32,16 @@ export type ImageToolDefinition = {
 };
 
 export type ImageQuickToolsConfig = {
+    version: 1;
     ids: ImageQuickToolId[];
     showLabels: boolean;
 };
 
 export const IMAGE_QUICK_TOOLS_STORAGE_KEY = "canvas-image-quick-tools-v7";
 
-const defaultBaseToolIds: ImageQuickToolId[] = ["info", "delete", "saveAsset", "download"];
+const defaultBaseToolIds: ImageQuickToolId[] = ["info", "delete", "saveAsset", "download", "duplicate"];
+
+export const secondaryImageToolIds = new Set<ImageQuickToolId>(["saveAsset", "download", "duplicate", "copyPrompt", "view", "maskEdit", "crop", "split", "upscale", "angle"]);
 
 export const imageToolDefinitions: ImageToolDefinition[] = [
     {
@@ -152,11 +155,12 @@ export function normalizeImageQuickToolIds(value: unknown[]) {
 }
 
 export function readImageQuickToolsConfig(value: unknown): ImageQuickToolsConfig {
-    if (Array.isArray(value)) return { ids: normalizeImageQuickToolIds(value), showLabels: false };
-    if (!value || typeof value !== "object") return { ids: defaultImageQuickToolIds, showLabels: false };
+    if (Array.isArray(value)) return { version: 1, ids: normalizeImageQuickToolIds([...value, "duplicate"]), showLabels: false };
+    if (!value || typeof value !== "object") return { version: 1, ids: defaultImageQuickToolIds, showLabels: false };
     const data = value as Partial<ImageQuickToolsConfig>;
     return {
-        ids: Array.isArray(data.ids) ? normalizeImageQuickToolIds(data.ids) : defaultImageQuickToolIds,
+        version: 1,
+        ids: Array.isArray(data.ids) ? normalizeImageQuickToolIds(data.version === 1 ? data.ids : [...data.ids, "duplicate"]) : defaultImageQuickToolIds,
         showLabels: data.showLabels === true,
     };
 }

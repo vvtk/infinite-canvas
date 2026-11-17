@@ -49,7 +49,13 @@ export function publicMediaRoutes(app:FastifyInstance,pool:Pool,config:Config,re
             const item=(await db.query("SELECT * FROM canvas_public_media WHERE id=$1 AND ready FOR SHARE",[id])).rows[0];
             if(!item) fail(404,"媒体不存在");
             const client=await clientFor(db,config,item.pool_id);
-            try {return reply.redirect(await client.url(item.object_key,config.MEDIA_URL_SECONDS));} finally {client.close();}
+            let stream: Awaited<ReturnType<typeof client.read>>;
+            try { stream = await client.read(item.object_key); } catch (error) { client.close(); throw error; }
+            let released = false;
+            const release = () => { if (!released) { released = true; client.close(); } };
+            stream.once("end", release).once("error", release);
+            reply.raw.once("close", release);
+            return reply.type(item.mime_type).header("Content-Length", String(item.bytes)).header("Cache-Control", "private, max-age=600").send(stream);
         });
     });
 }

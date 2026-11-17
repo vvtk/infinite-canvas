@@ -74,7 +74,19 @@ export type WebdavSyncConfig = {
     directory: string;
     lastSyncedAt: string;
 };
-export type ConfigTabKey = "channels" | "system-channel" | "local-proxy" | "preferences" | "webdav" | "local-storage";
+export type ConfigTabKey = "channels" | "system-channel" | "local-proxy" | "preferences" | "webdav" | "local-storage" | "canvas";
+
+export type CanvasPreferences = {
+    alwaysShowPanels: boolean;
+    hideImageBackground: boolean;
+    developerMode: boolean;
+};
+
+export const defaultCanvasPreferences: CanvasPreferences = {
+    alwaysShowPanels: false,
+    hideImageBackground: true,
+    developerMode: false,
+};
 
 export type ChannelCredentialsImportResult = {
     status: "created" | "updated" | "missing-base-url" | "invalid-base-url";
@@ -148,6 +160,8 @@ export const defaultWebdavSyncConfig: WebdavSyncConfig = {
 
 type ConfigStore = {
     config: AiConfig;
+    canvasPreferences: CanvasPreferences;
+    updateCanvasPreference: <K extends keyof CanvasPreferences>(key: K, value: CanvasPreferences[K]) => void;
     systemSnapshot: SystemChannelSnapshot | null;
     systemCatalog: string[];
     systemError: string;
@@ -237,6 +251,8 @@ export const useConfigStore = create<ConfigStore>()(
     persist(
         (set, get) => ({
             config: defaultConfig,
+            canvasPreferences: defaultCanvasPreferences,
+            updateCanvasPreference: (key, value) => set((state) => ({ canvasPreferences: { ...state.canvasPreferences, [key]: value } })),
             systemSnapshot: null,
             systemCatalog: [],
             systemError: "",
@@ -298,7 +314,7 @@ export const useConfigStore = create<ConfigStore>()(
         {
             name: CONFIG_STORE_KEY,
             storage: createJSONStorage(() => localForageStorage),
-            partialize: (state) => ({ config: state.config, webdav: state.webdav, systemOverrides: state.systemOverrides }),
+            partialize: (state) => ({ config: state.config, webdav: state.webdav, systemOverrides: state.systemOverrides, canvasPreferences: state.canvasPreferences }),
             merge: (persisted, current) => {
                 const persistedState = (persisted || {}) as Partial<ConfigStore>;
                 const persistedConfig = (persistedState.config || {}) as Partial<AiConfig>;
@@ -309,6 +325,7 @@ export const useConfigStore = create<ConfigStore>()(
                 const models = modelOptionsFromChannels(channels);
                 return {
                     ...current,
+                    canvasPreferences: { ...defaultCanvasPreferences, ...persistedState.canvasPreferences },
                     systemOverrides: sanitizeSystemOverrides(persistedState.systemOverrides),
                     webdav: { ...defaultWebdavSyncConfig, ...persistedWebdav },
                     config: {

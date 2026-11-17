@@ -1,18 +1,23 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { createPortal } from "react-dom";
 import { Button, Input, Modal, Slider, Tooltip } from "antd";
-import { Brush, Eraser, ImagePlus, Redo2, RotateCcw, Undo2, WandSparkles, ZoomIn, ZoomOut } from "lucide-react";
+import { Brush, Eraser, ImagePlus, Plus, Redo2, RotateCcw, Undo2, WandSparkles, X, ZoomIn, ZoomOut } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { nanoid } from "nanoid";
 
+import { canvasThemes } from "@/lib/canvas-theme";
 import { matchesCanvasShortcut } from "@/lib/canvas/keyboard-shortcuts";
 import { useCanvasShortcutStore } from "@/stores/canvas/use-canvas-shortcut-store";
-import { readImageMeta } from "@/lib/image-utils";
+import { useThemeStore } from "@/stores/use-theme-store";
+import { readFileAsDataUrl, readImageMeta } from "@/lib/image-utils";
 import { useImageEditorViewport } from "@/components/canvas/use-image-editor-viewport";
+import type { ReferenceImage } from "@/types/image";
 
 export type CanvasImageMaskEditPayload = {
     prompt: string;
     maskDataUrl: string;
     generate: boolean;
+    referenceImages: ReferenceImage[];
 };
 
 type DrawMode = "paint" | "erase";
@@ -24,9 +29,11 @@ const defaultBrushSize = 100;
 const maskOverlayColor = "#2563eb";
 const maskOverlayAlpha = 0.4;
 
-export function CanvasNodeMaskEditDialog({ dataUrl, open, onClose, onConfirm }: { dataUrl: string; open: boolean; onClose: () => void; onConfirm: (payload: CanvasImageMaskEditPayload) => void }) {
+export function CanvasNodeMaskEditDialog({ dataUrl, open, onClose, onConfirm }: { dataUrl: string; open: boolean; onClose: () => void; onConfirm: (payload: CanvasImageMaskEditPayload) => Promise<void> }) {
     const shortcutBindings = useCanvasShortcutStore((state) => state.bindings);
     const { t } = useTranslation();
+    const theme = canvasThemes[useThemeStore((state) => state.theme)];
+    const fileInputRef = useRef<HTMLInputElement>(null);
     const maskCanvasRef = useRef<HTMLCanvasElement>(null);
     const previewCanvasRef = useRef<HTMLCanvasElement>(null);
     const imageRef = useRef<HTMLImageElement>(null);
@@ -36,6 +43,9 @@ export function CanvasNodeMaskEditDialog({ dataUrl, open, onClose, onConfirm }: 
     const redoRef = useRef<MaskStroke[]>([]);
     const [image, setImage] = useState<{ width: number; height: number } | null>(null);
     const [prompt, setPrompt] = useState("");
+    const [referenceImages, setReferenceImages] = useState<ReferenceImage[]>([]);
+    const [reading, setReading] = useState(false);
+    const [submitting, setSubmitting] = useState<"export" | "generate" | null>(null);
     const [brushSize, setBrushSize] = useState(defaultBrushSize);
     const [mode, setMode] = useState<DrawMode>("paint");
     const [error, setError] = useState("");
@@ -43,8 +53,10 @@ export function CanvasNodeMaskEditDialog({ dataUrl, open, onClose, onConfirm }: 
     const [redoSize, setRedoSize] = useState(0);
     const [brushPreview, setBrushPreview] = useState<BrushPreview | null>(null);
     const viewport = useImageEditorViewport(image, open);
+    const busy = reading || submitting !== null;
 
     useEffect(() => {
+        setReferenceImages([]);
         if (!open) return;
         setPrompt("");
         setBrushSize(defaultBrushSize);
@@ -204,18 +216,47 @@ export function CanvasNodeMaskEditDialog({ dataUrl, open, onClose, onConfirm }: 
         return () => window.removeEventListener("keydown", handleKeyDown, true);
     }, [open, redoMask, shortcutBindings, undoMask]);
 
-    const submit = (generate: boolean) => {
+    const addReferenceImages = async (files: File[]) => {
+        if (!files.length || busy) return;
+        setReading(true);
+        setError("");
+        try {
+            const images = await Promise.all(files.map(async (file) => {
+                const dataUrl = await readFileAsDataUrl(file);
+                const preview = new Image();
+                preview.src = dataUrl;
+                await preview.decode();
+                return { id: nanoid(), name: file.name, type: file.type, dataUrl };
+            }));
+            setReferenceImages((current) => [...current, ...images]);
+        } catch {
+            setError(t("common.imageReadFailed"));
+        } finally {
+            setReading(false);
+        }
+    };
+
+    const submit = async (generate: boolean) => {
+        if (busy) return;
         const nextPrompt = prompt.trim();
         const canvas = maskCanvasRef.current;
         const element = imageRef.current;
-        if (!nextPrompt) return setError(t("canvas.editors.maskPromptRequired"));
+        if (generate && !nextPrompt) return setError(t("canvas.editors.maskPromptRequired"));
         if (!canvas || !element) return;
         if (!canvasHasPaint(canvas)) return setError(t("canvas.editors.maskRequired"));
-        onConfirm({ prompt: nextPrompt, maskDataUrl: buildMaskOverlay(element, canvas), generate });
+        setSubmitting(generate ? "generate" : "export");
+        setError("");
+        try {
+            await onConfirm({ prompt: nextPrompt, maskDataUrl: buildMaskOverlay(element, canvas), generate, referenceImages });
+        } catch (error) {
+            setError(error instanceof Error ? error.message : t("canvas.projectPage.maskFailed"));
+        } finally {
+            setSubmitting(null);
+        }
     };
 
     return (
-        <Modal title={null} open={open && Boolean(dataUrl)} onCancel={onClose} footer={null} width={980} centered destroyOnHidden transitionName="" maskTransitionName="">
+        <Modal title={null} open={open && Boolean(dataUrl)} onCancel={() => { if (!busy) onClose(); }} closable={!busy} maskClosable={!busy} keyboard={!busy} footer={null} width={980} centered destroyOnHidden transitionName="" maskTransitionName="">
             <div className="grid gap-5 lg:grid-cols-[minmax(360px,1fr)_320px]" data-canvas-no-zoom>
                 <div
                     ref={viewport.viewportRef}
@@ -263,7 +304,7 @@ export function CanvasNodeMaskEditDialog({ dataUrl, open, onClose, onConfirm }: 
                       )
                     : null}
 
-                <div className="flex min-h-[360px] flex-col gap-5">
+                <div className="flex min-h-[360px] min-w-0 flex-col gap-5">
                     <div>
                         <h2 className="text-xl font-semibold">{t("canvas.editors.maskTitle")}</h2>
                         <div className="mt-2 text-sm opacity-60">{image ? `${image.width} x ${image.height}px` : t("canvas.editors.loading")}</div>
@@ -309,28 +350,47 @@ export function CanvasNodeMaskEditDialog({ dataUrl, open, onClose, onConfirm }: 
 
                     <div className="space-y-2">
                         <div className="text-sm font-medium opacity-75">{t("canvas.editors.editInstructions")}</div>
+                        <input ref={fileInputRef} type="file" accept="image/*" multiple hidden disabled={busy} onChange={(event) => {
+                            const files = Array.from(event.target.files || []);
+                            event.target.value = "";
+                            void addReferenceImages(files);
+                        }} />
+                        <div className="thin-scrollbar flex min-h-12 gap-2 overflow-x-auto pb-1" role="group" aria-label={t("canvas.configNode.references")}>
+                            {referenceImages.map((image) => (
+                                <div key={image.id} className="group relative size-12 shrink-0 rounded-xl border" style={{ borderColor: theme.toolbar.border }}>
+                                    <img src={image.dataUrl} alt={image.name} title={image.name} className="size-full rounded-[inherit] object-cover" />
+                                    <button type="button" disabled={busy} className="absolute right-0 top-0 grid size-5 place-items-center rounded-full border opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 disabled:cursor-wait" style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text }} aria-label={t("canvas.editors.maskRemoveReference", { name: image.name })} onClick={() => setReferenceImages((current) => current.filter((item) => item.id !== image.id))}>
+                                        <X className="size-3" />
+                                    </button>
+                                </div>
+                            ))}
+                            <button type="button" disabled={busy} className="grid size-12 shrink-0 place-items-center rounded-xl border bg-transparent transition hover:opacity-70 disabled:cursor-wait disabled:opacity-50" style={{ borderColor: theme.toolbar.border, color: theme.node.muted }} title={t("canvas.editors.maskAddReference")} aria-label={t("canvas.editors.maskAddReference")} onClick={() => fileInputRef.current?.click()}>
+                                <Plus className="size-4" />
+                            </button>
+                        </div>
                         <Input.TextArea
-                            rows={6}
+                            rows={4}
                             value={prompt}
-                            status={error && !prompt.trim() ? "error" : undefined}
+                            disabled={busy}
+                            status={error === t("canvas.editors.maskPromptRequired") ? "error" : undefined}
                             placeholder={t("canvas.editors.maskPlaceholder")}
                             onChange={(event) => {
                                 setPrompt(event.target.value);
                                 setError("");
                             }}
                         />
-                        {error ? <div className="text-xs font-medium text-[#ef4444]">{error}</div> : null}
+                        {error ? <div role="alert" className="text-xs font-medium text-[#ef4444]">{error}</div> : null}
                     </div>
 
                     <div className="mt-auto flex items-center justify-between gap-2">
-                        <Button icon={<RotateCcw className="size-4" />} onClick={resetMask}>
+                        <Button icon={<RotateCcw className="size-4" />} disabled={busy} onClick={resetMask}>
                             {t("canvas.editors.reset")}
                         </Button>
                         <div className="flex items-center gap-2">
-                            <Button icon={<ImagePlus className="size-4" />} onClick={() => submit(false)}>
+                            <Button icon={<ImagePlus className="size-4" />} disabled={busy} loading={submitting === "export"} onClick={() => void submit(false)}>
                                 {t("canvas.editors.maskExport")}
                             </Button>
-                            <Button type="primary" icon={<WandSparkles className="size-4" />} onClick={() => submit(true)}>
+                            <Button type="primary" icon={<WandSparkles className="size-4" />} disabled={busy} loading={submitting === "generate"} onClick={() => void submit(true)}>
                                 {t("canvas.editors.maskGenerate")}
                             </Button>
                         </div>

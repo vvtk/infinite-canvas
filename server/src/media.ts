@@ -69,4 +69,21 @@ export function mediaRoutes(app: FastifyInstance, pool: Pool, config: Config, re
             finally { client.close(); }
         });
     });
+    app.get("/api/media/:id/content", async (request, reply) => {
+        const { userId } = await requireSession(request);
+        const { id } = z.object({ id: z.string() }).parse(request.params);
+        return transaction(pool, async db => {
+            await requireCloudStorage(db, config);
+            const item = (await db.query("SELECT * FROM canvas_media WHERE id=$1 AND user_id=$2 AND ready FOR SHARE", [id, userId])).rows[0];
+            if (!item) fail(404, "媒体不存在");
+            const client = await clientFor(db, config, item.pool_id);
+            let stream: Awaited<ReturnType<typeof client.read>>;
+            try { stream = await client.read(item.object_key); } catch (error) { client.close(); throw error; }
+            let released = false;
+            const release = () => { if (!released) { released = true; client.close(); } };
+            stream.once("end", release).once("error", release);
+            reply.raw.once("close", release);
+            return reply.type(item.mime_type).header("Content-Length", String(item.bytes)).header("Cache-Control", "private, max-age=600").send(stream);
+        });
+    });
 }

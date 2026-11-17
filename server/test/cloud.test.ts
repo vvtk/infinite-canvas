@@ -369,6 +369,7 @@ test("PostgreSQL auth, isolation, revision conflicts, media quota", { skip: !pro
                 const requests=[
                     app.inject({url:"/api/sync/changes",headers}),
                     app.inject({url:"/api/media/unknown/url",headers}),
+                    app.inject({url:"/api/media/unknown/content",headers}),
                     app.inject({method:"POST",url:"/api/sync/records",headers,payload:{domain:"canvas",id:"disabled-test",data:{id:"disabled-test"},baseRevision:0,deleted:false,media:[]}}),
                     app.inject({method:"POST",url:"/api/media/uploads",headers,payload:{storageKey:"image:disabled-test",bytes:1,mimeType:"image/png",sha256:digest(Buffer.from([1]))}}),
                     app.inject({method:"POST",url:"/api/media/unknown/complete",headers,payload:{}}),
@@ -378,6 +379,41 @@ test("PostgreSQL auth, isolation, revision conflicts, media quota", { skip: !pro
                 assert.equal((await app.inject({url:"/api/admin/storage/pools",headers:adminHeaders})).statusCode,200);
                 assert.equal((await app.inject({url:"/api/admin/storage/pools",headers})).statusCode,403);
                 assert.equal((await pool.query("SELECT 1 FROM canvas_records WHERE id='disabled-test'")).rowCount,0);
+                const workflow: WorkflowDocument = { version: 1, nodes: [{ id: "text", type: "text", title: "文本", width: 200, height: 120, position: { x: 0, y: 0 } }], connections: [], models: {}, media: [] };
+                const data = { title: "Cloud-independent tutorial fixture", format: "workflow", workflow };
+                const created = await app.inject({method:"POST",url:"/api/admin/tutorials",headers:adminHeaders,payload:{data,published:true}});
+                assert.equal(created.statusCode,200,created.body);
+                const {id}=created.json(), detailUrl=`/api/admin/tutorials/${id}`, publicUrl=`/api/library/tutorials/${id}`;
+                const saved=(await pool.query("SELECT data FROM canvas_library WHERE id=$1 AND kind='tutorials'",[id])).rows[0];
+                assert.deepEqual(saved.data.workflow,workflow);
+                assert.equal((await pool.query("SELECT 1 FROM canvas_records WHERE id=$1",[id])).rowCount,0);
+                assert.deepEqual((await app.inject({url:detailUrl,headers:adminHeaders})).json().data.workflow,workflow);
+                assert.deepEqual((await app.inject({url:publicUrl})).json().data.workflow,workflow);
+                for(const url of ["/api/admin/tutorials?format=workflow&keyword=Cloud-independent", "/api/library/tutorials?format=workflow&keyword=Cloud-independent"]) {
+                    const list=await app.inject({url,headers:adminHeaders});
+                    assert.equal(list.statusCode,200,list.body);
+                    assert.ok(list.json().items.some((item:{id:string})=>item.id===id));
+                }
+                const updated={...data,title:"Updated cloud-independent tutorial"};
+                assert.equal((await app.inject({method:"PATCH",url:detailUrl,headers:adminHeaders,payload:{data:updated,published:true,revision:1}})).statusCode,200);
+                assert.equal((await app.inject({url:publicUrl})).json().data.title,updated.title);
+                const media=await app.inject({method:"POST",url:"/api/admin/media/uploads",headers:adminHeaders,payload:{bytes:1,mimeType:"image/png",sha256:digest(Buffer.from([1]))}});
+                assert.equal(media.statusCode,200,media.body);
+                if(process.env.TEST_S3_ENDPOINT) {
+                    const {id:mediaId,upload}=media.json(), body=new FormData();
+                    for(const [key,value] of Object.entries(upload.fields)) body.append(key,String(value));
+                    body.append("file",new Blob([new Uint8Array([1])],{type:"image/png"}));
+                    const uploaded=await fetch(upload.url,{method:"POST",body});
+                    assert.ok(uploaded.ok,await uploaded.text());
+                    assert.equal((await app.inject({method:"POST",url:`/api/admin/media/${mediaId}/complete`,headers:adminHeaders,payload:{}})).statusCode,200);
+                    assert.equal((await app.inject({method:"PATCH",url:detailUrl,headers:adminHeaders,payload:{data:{...updated,coverUrl:`/api/library/media/${mediaId}`},published:true,revision:2}})).statusCode,200);
+                    const download=await app.inject({url:`/api/library/media/${mediaId}`});
+                    assert.equal(download.statusCode,200,download.body);
+                    assert.equal(download.headers.location,undefined);
+                    assert.deepEqual(new Uint8Array(download.rawPayload),new Uint8Array([1]));
+                }
+                assert.equal((await app.inject({method:"POST",url:"/api/admin/tutorials/delete",headers:adminHeaders,payload:{ids:[id]}})).statusCode,200);
+                assert.equal((await app.inject({url:publicUrl})).statusCode,404);
             } finally {
                 settings.revision++;settings.data.userCloudStorageEnabled=true;
                 assert.equal((await app.inject({method:"PATCH",url:"/api/admin/settings",headers:adminHeaders,payload:settings})).statusCode,200);
@@ -506,10 +542,11 @@ test("PostgreSQL auth, isolation, revision conflicts, media quota", { skip: !pro
             const { id } = created.json(), mediaUrl = `/api/library/media/${mediaId}`;
             assert.equal((await app.inject({ url: mediaUrl })).statusCode, 401);
             assert.equal((await app.inject({ url: mediaUrl, headers })).statusCode, 403);
-            assert.equal((await app.inject({ url: mediaUrl, headers: adminHeaders })).statusCode, 302);
+            assert.equal((await app.inject({ url: mediaUrl, headers: adminHeaders })).statusCode, 200);
             assert.equal((await app.inject({ method: "PATCH", url: `/api/admin/tutorials/${id}`, headers: adminHeaders, payload: { data, published: true, revision: 1 } })).statusCode, 200);
-            const download = await app.inject({ url: mediaUrl }); assert.equal(download.statusCode, 302);
-            assert.deepEqual(new Uint8Array(await (await fetch(download.headers.location!)).arrayBuffer()), bytes);
+            const download = await app.inject({ url: mediaUrl }); assert.equal(download.statusCode, 200);
+            assert.equal(download.headers.location, undefined);
+            assert.deepEqual(new Uint8Array(download.rawPayload), bytes);
             const settings = (await app.inject({ url: "/api/admin/settings", headers: adminHeaders })).json();
             settings.data.publicContent.tutorials = false;
             assert.equal((await app.inject({ method: "PATCH", url: "/api/admin/settings", headers: adminHeaders, payload: settings })).statusCode, 200);
@@ -538,13 +575,13 @@ test("PostgreSQL auth, isolation, revision conflicts, media quota", { skip: !pro
             const data={title:"Public image",assetKind:"image",mediaId};
             const created=await app.inject({method:"POST",url:"/api/admin/assets",headers:adminHeaders,payload:{data,published:true}});
             assert.equal(created.statusCode,200,created.body);
-            const download=await app.inject({url});assert.equal(download.statusCode,302);
-            const file=await fetch(download.headers.location!);assert.ok(file.ok);
-            assert.deepEqual(new Uint8Array(await file.arrayBuffer()),bytes);
+            const download=await app.inject({url});assert.equal(download.statusCode,200);
+            assert.equal(download.headers.location,undefined);
+            assert.deepEqual(new Uint8Array(download.rawPayload),bytes);
             const id=created.json().id;
             assert.equal((await app.inject({method:"PATCH",url:`/api/admin/assets/${id}`,headers:adminHeaders,payload:{data,published:false,revision:1}})).statusCode,200);
             assert.equal((await app.inject({url})).statusCode,401);
-            assert.equal((await app.inject({url,headers:adminHeaders})).statusCode,302);
+            assert.equal((await app.inject({url,headers:adminHeaders})).statusCode,200);
             assert.ok((await pool.query("SELECT 1 FROM canvas_admin_audit WHERE action='media.complete' AND target=$1",[mediaId])).rowCount);
         });
         await suite.test("source sync is idempotent and keeps overrides, tombstones and last successful data",async()=>{

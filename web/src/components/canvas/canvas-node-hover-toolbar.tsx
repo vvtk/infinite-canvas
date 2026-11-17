@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { App, Modal, Segmented, Tooltip } from "antd";
-import { Download, Ellipsis, FolderPlus, Image as ImageIcon, Info, MessageSquare, Minus, Music2, Plus, RefreshCw, Settings2, Trash2, Ungroup, Upload, Video } from "lucide-react";
+import { Copy, Download, Ellipsis, FolderPlus, Image as ImageIcon, Info, MessageSquare, Minus, Music2, Plus, RefreshCw, Settings2, Trash2, Ungroup, Upload, Video } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { canvasThemes } from "@/lib/canvas-theme";
@@ -11,10 +11,12 @@ import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasNodeType, type CanvasNodeData, type ViewportTransform } from "@/types/canvas";
 import type { CanvasNodeToolbarItem } from "@/types/canvas-plugin";
 import { ImageToolSettingsModal, type ImageToolbarSettingsTool } from "./canvas-image-toolbar-settings-modal";
-import { IMAGE_QUICK_TOOLS_STORAGE_KEY, buildImageToolbarTools, defaultImageQuickToolIds, readImageQuickToolsConfig, type ImageQuickToolId } from "./canvas-image-toolbar-tools";
+import { IMAGE_QUICK_TOOLS_STORAGE_KEY, buildImageToolbarTools, defaultImageQuickToolIds, normalizeImageQuickToolIds, readImageQuickToolsConfig, secondaryImageToolIds, type ImageQuickToolId } from "./canvas-image-toolbar-tools";
 
 type CanvasNodeHoverToolbarProps = {
     node: CanvasNodeData | null;
+    imageId?: string;
+    secondaryImage?: boolean;
     viewport: ViewportTransform;
     onKeep: (nodeId: string) => void;
     onLeave: () => void;
@@ -25,6 +27,7 @@ type CanvasNodeHoverToolbarProps = {
     onGenerateImage: (node: CanvasNodeData) => void;
     onUpload: (node: CanvasNodeData) => void;
     onDownload: (node: CanvasNodeData) => void;
+    onDuplicate: (node: CanvasNodeData) => void;
     onSaveAsset: (node: CanvasNodeData) => void;
     onMaskEdit: (node: CanvasNodeData) => void;
     onCrop: (node: CanvasNodeData) => void;
@@ -53,6 +56,8 @@ type ToolbarTool = {
 
 export function CanvasNodeHoverToolbar({
     node,
+    imageId,
+    secondaryImage = false,
     viewport,
     onKeep,
     onLeave,
@@ -63,6 +68,7 @@ export function CanvasNodeHoverToolbar({
     onGenerateImage,
     onUpload,
     onDownload,
+    onDuplicate,
     onSaveAsset,
     onMaskEdit,
     onCrop,
@@ -102,13 +108,13 @@ export function CanvasNodeHoverToolbar({
 
     useEffect(() => {
         setImageToolSettingsOpen(false);
-    }, [node?.id]);
+    }, [node?.id, imageId]);
 
     if (!node) return null;
 
     const activeNode = node;
     const left = viewport.x + (node.position.x + node.width / 2) * viewport.k;
-    const top = viewport.y + node.position.y * viewport.k - 14;
+    const top = viewport.y + (node.position.y - 14) * viewport.k;
     const isImage = node.type === CanvasNodeType.Image;
     const isVideo = node.type === CanvasNodeType.Video;
     const isAudio = node.type === CanvasNodeType.Audio;
@@ -147,6 +153,7 @@ export function CanvasNodeHoverToolbar({
         ...(canRetry ? [{ id: "retry", title: t("canvas.nodeToolbar.retryTitle"), label: t("canvas.node.retry"), icon: <RefreshCw className="size-4" />, onClick: () => onRetry(node) }] : []),
         ...(hasImage || hasVideo || isText ? [{ id: "saveAsset", title: t("common.addToAssets"), label: t("canvas.nodeToolbar.saveAsset"), icon: <FolderPlus className="size-4" />, onClick: () => onSaveAsset(node) }] : []),
         ...(hasImage || hasVideo || hasAudio ? [{ id: "download", title: t(hasAudio ? "canvas.nodeToolbar.downloadAudio" : hasVideo ? "canvas.nodeToolbar.downloadVideo" : "canvas.nodeToolbar.downloadImage"), label: t("common.download"), icon: <Download className="size-4" />, onClick: () => onDownload(node) }] : []),
+        ...(hasImage ? [{ id: "duplicate", title: t("canvas.node.createCopy"), label: t("canvas.node.createCopy"), icon: <Copy className="size-4" />, onClick: () => onDuplicate(node) }] : []),
         ...(isVideo ? [{ id: "edit", title: t("common.edit"), label: t("common.edit"), icon: <MessageSquare className="size-4" />, onClick: () => onToggleDialog(node) }] : []),
         ...(isText ? [{ id: "generateImage", title: t("canvas.node.generateImage"), label: t("canvas.node.generate"), icon: <ImageIcon className="size-4" />, onClick: () => onGenerateImage(node) }] : []),
         ...(isConfig ? [{ id: "config", title: t("canvas.configNode.title"), label: t("canvas.configNode.title"), icon: <Settings2 className="size-4" />, onClick: () => onToggleDialog(node) }] : []),
@@ -157,8 +164,9 @@ export function CanvasNodeHoverToolbar({
         ...(isAudio ? [{ id: "uploadAudio", title: t(hasAudio ? "canvas.nodeToolbar.replaceAudio" : "canvas.nodeToolbar.uploadAudio"), label: t(hasAudio ? "canvas.nodeToolbar.replaceAudio" : "canvas.nodeToolbar.uploadAudio"), icon: <Music2 className="size-4" />, onClick: () => onUpload(node) }] : []),
         ...(hasImage ? imageTools.map((tool) => ({ id: tool.id, title: tool.title, label: tool.label, icon: tool.icon, active: tool.active, onClick: tool.onClick })) : []),
     ];
-    const toolbarTools = hasImage ? [...baseToolbarTools, ...nodeToolbarTools].filter((tool) => quickImageToolIdSet.has(tool.id as ImageQuickToolId)) : [...baseToolbarTools, ...nodeToolbarTools, ...extraTools];
-    const selectableImageToolbarTools = [...baseToolbarTools, ...nodeToolbarTools].filter((tool) => tool.id !== "retry") as ImageToolbarSettingsTool[];
+    const availableTools = [...baseToolbarTools, ...nodeToolbarTools].filter((tool) => !secondaryImage || secondaryImageToolIds.has(tool.id as ImageQuickToolId));
+    const toolbarTools = hasImage ? availableTools.filter((tool) => quickImageToolIdSet.has(tool.id as ImageQuickToolId)) : [...availableTools, ...extraTools];
+    const selectableImageToolbarTools = availableTools.filter((tool) => tool.id !== "retry") as ImageToolbarSettingsTool[];
 
     const closeImageToolSettings = () => {
         setImageToolSettingsOpen(false);
@@ -170,12 +178,12 @@ export function CanvasNodeHoverToolbar({
             const selected = new Set(current);
             if (visible) selected.add(id);
             else selected.delete(id);
-            return selectableImageToolbarTools.filter((tool) => selected.has(tool.id)).map((tool) => tool.id);
+            return normalizeImageQuickToolIds([...selected]);
         });
     };
 
     const saveImageToolSettings = () => {
-        const config = { ids: draftImageToolIds, showLabels: draftShowImageToolLabels };
+        const config = { version: 1, ids: draftImageToolIds, showLabels: draftShowImageToolLabels };
         setQuickImageToolIds(config.ids);
         setShowImageToolLabels(config.showLabels);
         window.localStorage.setItem(IMAGE_QUICK_TOOLS_STORAGE_KEY, JSON.stringify(config));
@@ -185,9 +193,9 @@ export function CanvasNodeHoverToolbar({
     return (
         <>
             <div
-                className="absolute z-[70] flex h-12 -translate-x-1/2 -translate-y-full items-center overflow-visible rounded-[18px] border border-black/10 bg-white text-[15px] text-[#242529] shadow-[0_8px_28px_rgba(15,23,42,.12)]"
+                className="absolute z-[70] flex h-12 items-center overflow-visible rounded-[18px] border border-black/10 bg-white text-[15px] text-[#242529] shadow-[0_8px_28px_rgba(15,23,42,.12)]"
                 data-node-toolbar={node.id}
-                style={{ left, top }}
+                style={{ left, top, transform: `translate(-50%, -100%) scale(${viewport.k})`, transformOrigin: "bottom center" }}
                 onMouseEnter={() => onKeep(node.id)}
                 onMouseLeave={() => {
                     if (!imageToolSettingsOpen) onLeave();

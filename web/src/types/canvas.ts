@@ -45,6 +45,8 @@ export type CanvasNodeText = {
 };
 
 export type CanvasNodeMetadata = {
+    // 未设置时跟随全局常显，手动固定或取消固定后以节点设置为准。
+    panelPinned?: boolean;
     content?: string;
     composerContent?: string;
     prompt?: string;

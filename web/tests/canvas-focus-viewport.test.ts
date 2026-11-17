@@ -34,10 +34,11 @@ test("clamps the zoom to [0.05, 1] and still centers oversized nodes", () => {
 test("keeps an open overlay inside the viewport, leaving a smaller gap below the panel", () => {
     const size = { width: 900, height: 600 };
     const node = { position: { x: 0, y: 0 }, width: 340, height: 500 };
-    const above = 62;
-    const below = 316;
-    const viewport = focusViewportForNode(node, size, { above, below });
-    const top = viewport.y + node.position.y * viewport.k - above;
+    const toolbar = { width: 500, height: 62 };
+    const panel = { width: 600, height: 316 };
+    const viewport = focusViewportForNode(node, size, { toolbar, panel });
+    const below = panel.height * viewport.k;
+    const top = viewport.y + (node.position.y - toolbar.height) * viewport.k;
     const bottom = viewport.y + (node.position.y + node.height) * viewport.k + below;
     expect(top).toBeGreaterThanOrEqual(0);
     expect(bottom).toBeLessThanOrEqual(size.height);
@@ -50,11 +51,51 @@ test("keeps the panel clear of the bottom dock, leaving a smaller gap below it",
     const size = { width: 900, height: 700 };
     const node = { position: { x: 0, y: 0 }, width: 340, height: 240 };
     const bottomInset = 76;
-    const below = 316;
-    const viewport = focusViewportForNode(node, size, { below, bottomInset });
+    const panel = { width: 600, height: 316 };
+    const viewport = focusViewportForNode(node, size, { panel, bottomInset });
+    const below = panel.height * viewport.k;
     const top = viewport.y + node.position.y * viewport.k;
     const bottom = viewport.y + (node.position.y + node.height) * viewport.k + below;
     const usableBottom = size.height - bottomInset;
     expect(bottom).toBeLessThanOrEqual(usableBottom);
     expect(usableBottom - bottom).toBeCloseTo(top / 3, 6);
+});
+
+test("fits a panel wider than its node inside a narrow viewport", () => {
+    const size = { width: 320, height: 800 };
+    const node = { position: { x: 1234, y: -567 }, width: 220, height: 160 };
+    const panel = { width: 600, height: 316 };
+    const viewport = focusViewportForNode(node, size, { panel });
+    const center = projectPoint(nodeCenter(node), viewport);
+    expect(viewport.k).toBeCloseTo(size.width / panel.width, 6);
+    expect(center.x - (panel.width * viewport.k) / 2).toBeCloseTo(0, 6);
+    expect(center.x + (panel.width * viewport.k) / 2).toBeCloseTo(size.width, 6);
+});
+
+test("scales both overlays at the target zoom while keeping the dock in screen space", () => {
+    const size = { width: 1242, height: 668 };
+    const node = { position: { x: -450, y: 700 }, width: 340, height: 500 };
+    const panel = { width: 600, height: 316 };
+    const toolbar = { width: 500, height: 62 };
+    const bottomInset = 76;
+    const viewport = focusViewportForNode(node, size, { toolbar, panel, bottomInset });
+    const usableBottom = size.height - bottomInset;
+    expect(viewport.k).toBeCloseTo((usableBottom * 0.92) / (toolbar.height + node.height + panel.height), 6);
+    const top = viewport.y + (node.position.y - toolbar.height) * viewport.k;
+    const bottom = viewport.y + (node.position.y + node.height + panel.height) * viewport.k;
+    expect(top).toBeGreaterThanOrEqual(0);
+    expect(bottom).toBeLessThan(usableBottom);
+    expect(usableBottom - bottom).toBeCloseTo(top / 3, 6);
+});
+
+test("fits a toolbar wider than both the node and the lower panel", () => {
+    const size = { width: 320, height: 800 };
+    const node = { position: { x: -200, y: 400 }, width: 220, height: 160 };
+    const toolbar = { width: 800, height: 62 };
+    const panel = { width: 600, height: 316 };
+    const viewport = focusViewportForNode(node, size, { toolbar, panel });
+    const center = projectPoint(nodeCenter(node), viewport);
+    expect(viewport.k).toBeCloseTo(0.4, 6);
+    expect(center.x - (toolbar.width * viewport.k) / 2).toBeCloseTo(0, 6);
+    expect(center.x + (toolbar.width * viewport.k) / 2).toBeCloseTo(size.width, 6);
 });

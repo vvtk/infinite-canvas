@@ -2,6 +2,14 @@ import { useEffect, useState } from "react";
 import { Alert, App, Form, Input, InputNumber, Modal, Select, Switch } from "antd";
 import { saveStoragePool, storagePoolInput, type StoragePool, type StoragePoolInput } from "@/services/api/storage";
 
+const validateEndpoint = async (_rule: unknown, value: unknown) => {
+    if (!value) return;
+    try {
+        const url = new URL(String(value));
+        if (!["http:", "https:"].includes(url.protocol) || !url.hostname || url.username || url.password || url.pathname !== "/" || url.search || url.hash) throw new Error();
+    } catch { throw new Error("请填写不带路径的 HTTP(S) 服务地址"); }
+};
+
 export default function PoolEditor({ open, pool, onClose, onSaved }: { open: boolean; pool?: StoragePool; onClose: () => void; onSaved: () => void }) {
     const [form] = Form.useForm<StoragePoolInput>(), [saving, setSaving] = useState(false);
     const { message } = App.useApp();
@@ -28,8 +36,8 @@ export default function PoolEditor({ open, pool, onClose, onSaved }: { open: boo
                 <Form.Item name="name" label="名称" rules={[{ required: true }]}><Input placeholder="例如：主存储、异地备份" /></Form.Item>
                 <Form.Item name="provider" label="协议" rules={[{ required: true }]}><Select options={[{ value: "s3", label: "S3 兼容" }, { value: "oss", label: "阿里云 OSS 原生" }]} /></Form.Item>
             </div>
-            <Form.Item name="endpoint" label="服务端 Endpoint" rules={[{ required: true, type: "url" }]} extra={provider === "oss" ? "填写区域 Endpoint，例如 https://oss-cn-hangzhou.aliyuncs.com，不含 Bucket 前缀。" : "后端能够访问的 HTTP(S) 服务地址，不带对象路径。"}><Input placeholder="https://…" /></Form.Item>
-            <Form.Item name="publicEndpoint" label="浏览器访问 Endpoint" rules={[{ required: true, type: "url" }]} extra="必须能从用户浏览器访问，不能填写仅服务器可访问的容器主机名。OSS 同样填写不含 Bucket 前缀的区域地址。"><Input placeholder="https://…" /></Form.Item>
+            <Form.Item name="endpoint" label="服务端 Endpoint" rules={[{ required: true, message: "请输入服务地址" }, { validator: validateEndpoint }]} extra={provider === "oss" ? "填写区域 Endpoint，例如 https://oss-cn-hangzhou.aliyuncs.com，不含 Bucket 前缀。" : "后端能够访问的 HTTP(S) 服务地址，不带对象路径。Docker 内部地址可填写 http://s3:9000。"}><Input placeholder="https://…" /></Form.Item>
+            <Form.Item name="publicEndpoint" label="浏览器访问 Endpoint" rules={[{ required: true, message: "请输入服务地址" }, { validator: validateEndpoint }]} extra="必须能从用户浏览器访问，不能填写仅服务器可访问的容器主机名。OSS 同样填写不含 Bucket 前缀的区域地址。"><Input placeholder="https://…" /></Form.Item>
             <div className="grid gap-x-5 sm:grid-cols-2">
                 <Form.Item name="region" label="Region" rules={[{ required: true }]}><Input placeholder={provider === "oss" ? "oss-cn-hangzhou" : "us-east-1"} /></Form.Item>
                 <Form.Item name="bucket" label="Bucket" rules={[{ required: true }]}><Input /></Form.Item>

@@ -1,7 +1,7 @@
 import { saveAs } from "file-saver";
 
 import i18n from "@/i18n";
-import { modelOptionsFromChannels, useConfigStore, type AiConfig, type WebdavSyncConfig } from "@/stores/use-config-store";
+import { defaultCanvasPreferences, modelOptionsFromChannels, useConfigStore, type AiConfig, type CanvasPreferences, type WebdavSyncConfig } from "@/stores/use-config-store";
 import { sanitizeSystemOverrides, type SystemPreferences } from "../../../shared/system-channel";
 import { privateChannelsHidden, useSiteStore } from "@/stores/use-site-store";
 
@@ -12,14 +12,15 @@ type AppConfigFile = {
     config: AiConfig;
     webdav: WebdavSyncConfig;
     systemOverrides: Partial<SystemPreferences>;
+    canvasPreferences: CanvasPreferences;
 };
 
 export function exportAppConfig() {
-    const { config: storedConfig, webdav, systemOverrides } = useConfigStore.getState();
+    const { config: storedConfig, webdav, systemOverrides, canvasPreferences } = useConfigStore.getState();
     const managedKeys = new Set(storedConfig.channels.filter((item) => item.managedAccount).map((item) => item.apiKey));
     const channels = storedConfig.channels.filter((item) => !item.managedAccount);
     const config = { ...storedConfig, apiKey: managedKeys.has(storedConfig.apiKey) ? "" : storedConfig.apiKey, channels, models: modelOptionsFromChannels(channels) };
-    const data: AppConfigFile = { app: "infinite-canvas", version: 1, exportedAt: new Date().toISOString(), config, webdav, systemOverrides };
+    const data: AppConfigFile = { app: "infinite-canvas", version: 1, exportedAt: new Date().toISOString(), config, webdav, systemOverrides, canvasPreferences };
     saveAs(new Blob([JSON.stringify(data, null, 2)], { type: "application/json;charset=utf-8" }), "infinite-canvas-config.json");
 }
 
@@ -38,5 +39,5 @@ export async function importAppConfig(file: File) {
     const config = privateChannelsHidden() || !useSiteStore.getState().settings
         ? { ...data.config, channels: current.channels, models: current.models, baseUrl: current.baseUrl, apiKey: current.apiKey, apiFormat: current.apiFormat, channelMode: current.channelMode, model: current.model, imageModel: current.imageModel, videoModel: current.videoModel, textModel: current.textModel, audioModel: current.audioModel }
         : { ...data.config, channels, models: modelOptionsFromChannels(channels) };
-    useConfigStore.setState({ config, webdav: data.webdav, systemOverrides: sanitizeSystemOverrides(data.systemOverrides) });
+    useConfigStore.setState({ config, webdav: data.webdav, systemOverrides: sanitizeSystemOverrides(data.systemOverrides), canvasPreferences: { ...defaultCanvasPreferences, ...data.canvasPreferences } });
 }

@@ -15,6 +15,8 @@ description: OAuth 应用注册、独立 API、PostgreSQL、S3 与阿里云 OSS 
 
 后台「系统配置」的 `userCloudStorageEnabled` 默认开启。关闭后暂停所有账号的私有云同步读写和媒体签名操作，返回 `403` 与 `CLOUD_STORAGE_DISABLED`；保留浏览器及云端已有数据。登录、模型调用、WebDAV、公共库和管理员存储维护不受影响。前端只取消独立同步请求，不取消管理或授权请求；刷新设置、页面获得焦点或恢复联网后读取新状态。已经签发的媒体地址按原有效期失效，不能通过开关立即撤销。
 
+教程列表和已保存的教程流程直接存储在服务端 PostgreSQL 的 `canvas_library` 中，封面及示例媒体存储在公共媒体对象存储中，通过 `/api/admin/tutorials`、`/api/library/tutorials` 和公共媒体接口读写，不参与用户私有云同步，也不受 `userCloudStorageEnabled` 影响。浏览器 IndexedDB 的 `workflow_drafts` 仅用于编辑草稿恢复；保存后的教程以服务端版本为准。公开访问仍受发布状态与 `publicContent.tutorials` 控制，管理接口仍校验管理员权限。
+
 ## 存储池、迁移与关联数据备份（待验收）
 
 管理员在 `/admin/storage` 管理 S3 兼容和阿里云 OSS 原生存储池。池包含名称、服务端 Endpoint、浏览器 Endpoint、Region、Bucket、对象前缀、写入状态和凭据；S3 可选择 Path-style 寻址。阿里云 OSS 使用 `ali-oss` 的 V4 签名，Endpoint 填写不带 Bucket 前缀的区域地址，例如 `https://oss-cn-hangzhou.aliyuncs.com`，Region 填 `oss-cn-hangzhou`。两种协议都保持私有 Bucket，由后端签名后浏览器直传。

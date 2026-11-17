@@ -5,11 +5,15 @@ description: Planned follow-up work
 
 # TODO
 
+- 完善画布开发者模式：本次已提供并持久化开关，后续确认具体调试能力及入口后接入；当前开关不改变节点 JSON 查看等现有功能。
+
 AI tutorial workflows are implemented; full-screen editing, the shared sidebar and workflow-library new/switch actions, save-and-return, media, insertion and authorization acceptance are tracked in [Pending Tests](/docs/progress/pending-test). Sidebar layout and canceled switching still need manual verification.
 
 Session-expiry logout, shared LLMRoam credentials and private-channel visibility are implemented; acceptance remains in [Pending Tests](/docs/progress/pending-test).
 
 System-channel management and local preferences are implemented. Permission, request-parameter, account-isolation and video-recovery acceptance is tracked in [Pending Tests](/docs/progress/pending-test).
+
+- 修复未配置可用模型时点击模型选择器，同时打开配置窗口与下拉框导致的焦点循环及 `Maximum call stack size exceeded`。
 
 - Replace the Claude Code CLI adapter with a Claude Agent SDK adapter and improve the tool queue, following the [Local Agent Integration Plan](/docs/progress/local-agent-integration-plan).
 - Add Skill installation from web search, Skill resource-file management, and controlled local-memory persistence.

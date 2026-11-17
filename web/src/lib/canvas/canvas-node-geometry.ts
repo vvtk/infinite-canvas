@@ -151,9 +151,10 @@ export function normalizeConnection(firstNodeId: string, secondNodeId: string, n
 }
 
 export type FocusFrame = {
-    // Screen-space room taken above/below the node by open overlays (hover toolbar, prompt panel), gaps included.
-    above?: number;
-    below?: number;
+    // Canvas-space size of the centered toolbar above the node, gap included.
+    toolbar?: { width: number; height: number };
+    // Canvas-space size of the centered panel below the node, gap included.
+    panel?: { width: number; height: number };
     // Fixed chrome covering the bottom edge of the canvas (dock), excluded from the usable area.
     bottomInset?: number;
 };
@@ -162,13 +163,15 @@ export type FocusFrame = {
 // whole thing fits (the node itself is kept within 60% of the viewport). When an overlay is open below the node,
 // the remaining space is split 3:1 so the panel sits closer to the bottom dock (half the usual bottom gap).
 export function focusViewportForNode(node: Pick<CanvasNodeData, "position" | "width" | "height">, size: { width: number; height: number }, frame: FocusFrame = {}): ViewportTransform {
-    const above = frame.above ?? 0;
-    const below = frame.below ?? 0;
+    const toolbarHeight = frame.toolbar?.height ?? 0;
+    const panelHeight = frame.panel?.height ?? 0;
     const usableBottom = Math.max(0, size.height - (frame.bottomInset ?? 0));
     const nodeCenterX = node.position.x + node.width / 2;
     const nodeCenterY = node.position.y + node.height / 2;
-    const verticalRoom = usableBottom * 0.92 - above - below;
-    const k = Math.min(Math.max(Math.min((size.width * 0.6) / node.width, (size.height * 0.6) / node.height, verticalRoom / node.height), 0.05), 1);
+    const verticalRoom = usableBottom * 0.92;
+    const k = Math.min(Math.max(Math.min((size.width * 0.6) / node.width, (size.height * 0.6) / node.height, verticalRoom / (toolbarHeight + node.height + panelHeight), size.width / Math.max(node.width, frame.toolbar?.width ?? 0, frame.panel?.width ?? 0)), 0.05), 1);
+    const above = toolbarHeight * k;
+    const below = panelHeight * k;
     const groupHeight = above + node.height * k + below;
     const slack = usableBottom - groupHeight;
     const groupTop = slack * (below > 0 && slack > 0 ? 0.75 : 0.5);

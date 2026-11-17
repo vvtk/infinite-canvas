@@ -260,6 +260,8 @@ export default {
         agentDisconnected: "Codex 未连接",
         connecting: "连接中",
         openAgent: "打开本地 Codex 面板",
+        imageNavigation: { previous: "上一张", next: "下一张" },
+        panel: { pin: "固定面板", unpin: "取消固定面板" },
         nodeTypes: { image: "图片", text: "文本", config: "生成配置", video: "视频", audio: "音频", group: "组" },
         toolbar: {
             select: "选择", pan: "移动", focus: "居中聚焦", text: "文本", image: "图片", video: "视频", audio: "音频", config: "生成配置", group: "组", extensions: "扩展节点", upload: "上传资产", appearance: "画布外观", clear: "清空画布",
@@ -292,10 +294,14 @@ export default {
         nodeToolbar: { noPrompt: "暂无可复制的提示词", infoTitle: "查看节点信息", info: "信息", removeTitle: "移除节点", retryTitle: "重新生成", queryVideoTask: "获取任务状态", queryVideoTaskTitle: "使用任务 ID 查询视频生成状态", videoTaskId: "任务 ID", saveAsset: "存资产", downloadAudio: "下载音频", downloadVideo: "下载视频", downloadImage: "下载图片", editTextTitle: "编辑文本", editText: "编辑文字", decreaseFont: "减小字号", increaseFont: "增大字号", zoomOut: "缩小", zoomIn: "放大", uploadImage: "上传图片", replaceVideo: "替换视频", uploadVideo: "上传视频", replaceAudio: "替换音频", uploadAudio: "上传音频", nodeInfo: "节点信息", name: "名称", type: "类型", size: "尺寸", position: "位置", status: "状态", imageGroup: "图片组", imageSize: "图片大小", group: "打组", groupTitle: "用组节点包住选中节点", ungroup: "解散组", ungroupTitle: "取消节点分组" },
         configNode: { title: "生成配置", image: "生图", text: "文本", video: "视频", audio: "音频", prompt: "提示词", references: "参考图", videoReferences: "参考视频", audioReferences: "参考音频", items: "{{count}} 个", images: "{{count}} 张", compose: "组装提示词", stop: "停止", generate: "开始生成" },
         projectPage: {
-            stopTitle: "停止生成？", stopDescription: "当前生成请求会被中断，已经生成完成的内容会保留。", stop: "停止", continue: "继续生成", configConnection: "配置节点之间不能连接", notFound: "未找到当前画布", exporting: "正在导出当前画布…", exported: "已导出当前画布", clipboardText: "剪切板文本", clipboardImageAdded: "已从剪切板添加图片", clipboardTextAdded: "已从剪切板添加文本", noTextToSave: "没有可保存的文本", canvasText: "画布文本", noVideoToSave: "没有可保存的视频", canvasVideo: "画布视频", noImageToSave: "没有可保存的图片", canvasImage: "画布图片", emptyReverse: "图片节点为空，无法反推提示词", reverseTitle: "反推提示词", reverseConfigTitle: "反推提示词配置", splitTitle: "{{name}} {{row}}-{{column}}", splitSuccess: "已切分为 {{count}} 个子节点", maskResult: "局部编辑结果", maskFailed: "局部修改失败", generationFailed: "生成失败", partialFailed: "部分图片生成失败", partialTextFailed: "部分文本生成失败", allFailed: "全部图片生成失败", retryPromptMissing: "找不到提示词，无法重试", referenceMissing: "参考图片已丢失，无法继续重试", emptyTextImage: "文本节点为空，无法生图", untitledCanvas: "未命名画布", superResolve: "AI 超分", notImplemented: "暂未实现", imageDetails: "图片详情", clearTitle: "清空画布？", clear: "清空", clearDescription: "这会删除当前画布上的所有节点和连线。", reversePreset: "请根据参考图片反推一段适合用于 AI 生图的提示词。\n\n要求：\n1. 只输出提示词正文，不要解释。\n2. 覆盖主体、构图、风格、光线、色彩、材质、镜头和氛围。\n3. 尽量写成可直接用于生图模型的完整提示词。", maskPrompt: "参考{{source}}为原图，{{mask}}是在原图上用蓝色半透明标注出的待修改区域。请只修改蓝色标注覆盖的区域，其余区域与原图保持完全一致，输出与原图相同尺寸的完整图片，并且结果中不要保留任何蓝色标注。修改要求：{{prompt}}", maskNodeTitle: "遮罩标注", editTextPrompt: "请根据要求修改以下文本。\n\n原文：\n{{source}}\n\n修改要求：\n{{prompt}}"
+            imageSourceChanged: "原图已被移除或更新，请重新打开图片工具后再操作",
+            maskReferencesPrompt: "{{references}}为补充参考图，仅用于指导蓝色标注区域的修改，不得改变选区之外的内容。",
+            maskInstructionsPrompt: "修改要求：{{prompt}}",
+            stopTitle: "停止生成？", stopDescription: "当前生成请求会被中断，已经生成完成的内容会保留。", stop: "停止", continue: "继续生成", configConnection: "配置节点之间不能连接", notFound: "未找到当前画布", exporting: "正在导出当前画布…", exported: "已导出当前画布", clipboardText: "剪切板文本", clipboardImageAdded: "已从剪切板添加图片", clipboardTextAdded: "已从剪切板添加文本", noTextToSave: "没有可保存的文本", canvasText: "画布文本", noVideoToSave: "没有可保存的视频", canvasVideo: "画布视频", noImageToSave: "没有可保存的图片", canvasImage: "画布图片", emptyReverse: "图片节点为空，无法反推提示词", reverseTitle: "反推提示词", reverseConfigTitle: "反推提示词配置", splitTitle: "{{name}} {{row}}-{{column}}", splitSuccess: "已切分为 {{count}} 个子节点", maskResult: "局部编辑结果", maskFailed: "局部修改失败", generationFailed: "生成失败", partialFailed: "部分图片生成失败", partialTextFailed: "部分文本生成失败", allFailed: "全部图片生成失败", retryPromptMissing: "找不到提示词，无法重试", referenceMissing: "参考图片已丢失，无法继续重试", emptyTextImage: "文本节点为空，无法生图", untitledCanvas: "未命名画布", superResolve: "AI 超分", notImplemented: "暂未实现", imageDetails: "图片详情", clearTitle: "清空画布？", clear: "清空", clearDescription: "这会删除当前画布上的所有节点和连线。", reversePreset: "请根据参考图片反推一段适合用于 AI 生图的提示词。\n\n要求：\n1. 只输出提示词正文，不要解释。\n2. 覆盖主体、构图、风格、光线、色彩、材质、镜头和氛围。\n3. 尽量写成可直接用于生图模型的完整提示词。", maskPrompt: "参考{{source}}为原图，{{mask}}是在原图上用蓝色半透明标注出的待修改区域。请只修改蓝色标注覆盖的区域，其余区域与原图保持完全一致，输出与原图相同尺寸的完整图片，并且结果中不要保留任何蓝色标注。", maskNodeTitle: "遮罩标注", editTextPrompt: "请根据要求修改以下文本。\n\n原文：\n{{source}}\n\n修改要求：\n{{prompt}}"
         },
         reverseComposer: "参考图片：@[node:{{imageId}}]\n任务说明：@[node:{{textId}}]",
         editors: {
+            maskAddReference: "上传参考图", maskRemoveReference: "移除参考图：{{name}}",
             reset: "重置", zoomOut: "缩小", zoomIn: "放大", loading: "读取中", unknown: "未知", cancel: "取消",
             angleTitle: "AI 多角度", angleDescription: "左侧只预览方向，结果会基于原图重新生成", horizontal: "左右角度", pitch: "俯仰角度", distance: "镜头距离", lens: "广角镜头", standard: "标准", wide: "广角", aiGenerate: "AI 生成",
             upscaleTitle: "图片放大", source: "源图", targetPixels: "目标像素", maxReached: "图片已达到 4K，无需放大", targetReached: "图片已达到当前目标像素，无需放大", algorithm: "放大算法", outputSize: "输出尺寸", upscale: "生成放大图", high: "高清插值", highDescription: "适合照片和细节图", bilinear: "双线性", bilinearDescription: "平滑、速度快", nearest: "最近邻", nearestDescription: "适合像素风格",
@@ -424,6 +430,15 @@ export default {
         types: { added: "新增", fixed: "修复", changed: "调整", optimized: "优化", docs: "文档" },
     },
     config: {
+        canvas: {
+            title: "画布配置",
+            alwaysShowPanels: "面板一直显示",
+            alwaysShowPanelsDescription: "默认保持生成面板显示，可用各面板图钉单独固定或取消固定；关闭后，手动固定的面板仍保持显示。",
+            hideImageBackground: "隐藏图片节点背景",
+            hideImageBackgroundDescription: "隐藏图片节点的卡片底色，不改变原图及生成参数。",
+            developerMode: "开发者模式",
+            developerModeDescription: "仅保存开关状态，相关开发者功能将在后续完善。",
+        },
         title: "配置与用户偏好",
         invalidFile: "配置文件格式不正确",
         description: "渠道聚合、模型选择、同步与本地存储",
